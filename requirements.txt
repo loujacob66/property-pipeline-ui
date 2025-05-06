@@ -2,3 +2,11 @@ streamlit>=1.24.0
 pandas>=1.5.3
 plotly>=5.14.0
 numpy>=1.24.3
+beautifulsoup4
+lxml
+usaddress
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+playright

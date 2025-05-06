@@ -8,15 +8,76 @@ def get_db_connection(db_path):
 def get_all_listings(db_path, limit=None):
     """Get all property listings from the database."""
     conn = get_db_connection(db_path)
-    query = "SELECT * FROM listings"
+    # Explicitly list columns based on provided schema
+    columns = [
+        "id", "address", "city", "state", "zip", "price", "beds", "baths", "sqft",
+        "price_per_sqft", "url", "from_collection", "source", "imported_at",
+        "estimated_rent", "rent_yield", "mls_number", "mls_type", "tax_information",
+        "days_on_compass", "last_updated", "favorite", "year_built", "lot_size",
+        "hoa_fee", "parking", "heating", "cooling", "style", "construction",
+        "days_on_market", "status", "agent_name", "agent_phone", "agent_email",
+        "schools_json", "price_history_json", "walk_score", "transit_score", "bike_score",
+        "walkscore_shorturl", "compass_shorturl", "latitude", "longitude", "created_at", "last_updated_at"
+    ]
+    query = f"SELECT {', '.join([f'\"{col}\"' for col in columns])} FROM listings" # Quote column names
     if limit:
         query += f" LIMIT {limit}"
-    return pd.read_sql_query(query, conn)
+    
+    try:
+        # Define dtype dictionary for numeric columns
+        dtype_dict = {
+            'price': 'float64',
+            'beds': 'float64',
+            'baths': 'float64',
+            'sqft': 'float64',
+            'price_per_sqft': 'float64',
+            'estimated_rent': 'float64',
+            'rent_yield': 'float64',
+            'year_built': 'float64',
+            'hoa_fee': 'float64',
+            'walk_score': 'float64',
+            'transit_score': 'float64',
+            'bike_score': 'float64',
+            'latitude': 'float64',
+            'longitude': 'float64'
+        }
+        
+        df = pd.read_sql_query(query, conn, dtype=dtype_dict)
+        conn.close()
+        return df
+    except Exception as e:
+        # Log or handle error, maybe return column names that failed
+        print(f"Error executing query: {query}")
+        print(f"Error: {e}")
+        # Try SELECT * as a fallback for debugging? Or raise error.
+        # For now, let's return an empty df if specific columns fail
+        conn.close()
+        return pd.DataFrame()
 
 def get_filtered_listings(db_path, filters=None):
     """Get property listings with filters applied."""
     conn = get_db_connection(db_path)
-    query = "SELECT * FROM listings WHERE 1=1"
+    # Explicitly list columns based on provided schema
+    columns = [
+        "id", "address", "city", "state", "zip", "price", "beds", "baths", "sqft",
+        "price_per_sqft", "url", "from_collection", "source", "imported_at",
+        "estimated_rent", "rent_yield", "mls_number", "mls_type", "tax_information",
+        "days_on_compass", "last_updated", "favorite", "year_built", "lot_size",
+        "hoa_fee", "parking", "heating", "cooling", "style", "construction",
+        "days_on_market", "status", "agent_name", "agent_phone", "agent_email",
+        "schools_json", "price_history_json", "walk_score", "transit_score", "bike_score",
+        "walkscore_shorturl", "compass_shorturl", "latitude", "longitude", "created_at", "last_updated_at"
+    ]
+    # Quote column names in SELECT statement
+    query = f"""
+        SELECT {', '.join([f'\"{col}\"' for col in columns])} 
+        FROM listings l
+        WHERE 1=1
+        AND NOT EXISTS (
+            SELECT 1 FROM address_blacklist b 
+            WHERE LOWER(l.address) = LOWER(b.address)
+        )
+    """
     params = []
     
     if filters:
@@ -38,7 +99,16 @@ def get_filtered_listings(db_path, filters=None):
                 query += f" AND {column} = ?"
                 params.append(value)
     
-    return pd.read_sql_query(query, conn, params=params)
+    try:
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        return df
+    except Exception as e:
+         print(f"Error executing query: {query}")
+         print(f"Params: {params}")
+         print(f"Error: {e}")
+         conn.close()
+         return pd.DataFrame()
 
 def get_summary_stats(db_path):
     """Get summary statistics for the database."""
@@ -91,3 +161,66 @@ def get_summary_stats(db_path):
     stats['mls_types'] = pd.read_sql_query(query, conn)
     
     return stats
+
+def get_blacklisted_addresses(db_path):
+    """Get all blacklisted addresses from the database."""
+    conn = get_db_connection(db_path)
+    try:
+        df = pd.read_sql_query("""
+            SELECT address, reason, added_at, added_by 
+            FROM address_blacklist 
+            ORDER BY added_at DESC
+        """, conn)
+        return df
+    except Exception as e:
+        print(f"Error fetching blacklisted addresses: {e}")
+        return pd.DataFrame()
+    finally:
+        conn.close()
+
+def is_address_blacklisted(db_path, address):
+    """Check if an address is blacklisted."""
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT 1 FROM address_blacklist 
+            WHERE LOWER(address) = LOWER(?)
+        """, (address,))
+        return cursor.fetchone() is not None
+    finally:
+        conn.close()
+
+def add_to_blacklist(db_path, address, reason=None, added_by='system'):
+    """Add an address to the blacklist."""
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR IGNORE INTO address_blacklist (address, reason, added_by)
+            VALUES (?, ?, ?)
+        """, (address, reason, added_by))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        print(f"Error adding address to blacklist: {e}")
+        return False
+    finally:
+        conn.close()
+
+def remove_from_blacklist(db_path, address):
+    """Remove an address from the blacklist."""
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM address_blacklist 
+            WHERE LOWER(address) = LOWER(?)
+        """, (address,))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        print(f"Error removing address from blacklist: {e}")
+        return False
+    finally:
+        conn.close()

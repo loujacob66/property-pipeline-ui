@@ -15,33 +15,21 @@ st.set_page_config(
 # Define paths
 if 'base_path' not in st.session_state:
     st.session_state['base_path'] = Path(__file__).parent.parent
-    
     # Default paths
-    st.session_state['default_db_path'] = st.session_state['base_path'] / "property-pipeline" / "data" / "listings.db"
-    st.session_state['default_scripts_path'] = st.session_state['base_path'] / "property-pipeline"
+    st.session_state['default_db_path'] = "../property-pipeline/data/listings.db"
+    st.session_state['default_scripts_path'] = "../property-pipeline/scripts"
+    st.session_state['default_config_path'] = "../property-pipeline/config"
 
 # Sidebar for configuration
 with st.sidebar:
     st.title("Configuration")
-    
     # Database path
     db_path = st.text_input(
         "Database Path", 
         value=str(st.session_state['default_db_path']),
         help="Path to your listings.db SQLite database"
     )
-    
-    # Scripts path
-    scripts_path = st.text_input(
-        "Scripts Path", 
-        value=str(st.session_state['default_scripts_path']),
-        help="Path to the folder containing your Python scripts"
-    )
-    
-    # Save paths to session state
     st.session_state['db_path'] = db_path
-    st.session_state['scripts_path'] = scripts_path
-    
     # Quick links
     st.subheader("Quick Links")
     st.write("Navigate to:")
@@ -67,7 +55,7 @@ try:
     if df.empty:
         st.warning("Database connected, but no data found. Use the Data Enrichment page to populate your database.")
     else:
-        st.success("Successfully connected to the database!")
+        pass
         
         # Display some key metrics
         st.header("Quick Stats")
@@ -103,7 +91,9 @@ try:
             
             # Sample of recent listings
             st.header("Recent Listings")
-            st.dataframe(df, use_container_width=True)
+            # Select all rows and columns starting from the third column (index 2)
+            df_display = df.iloc[:, 1:]
+            st.dataframe(df_display, use_container_width=True)
             
             # Link to explore more
             st.write("Use the Property Explorer page to see more listings and apply filters.")
@@ -120,7 +110,7 @@ except Exception as e:
     if st.button("Initialize Database"):
         from utils.script_runner import run_init_db
         
-        init_script_path = Path(scripts_path) / "init_db.py"
+        init_script_path = Path(st.session_state['default_scripts_path']) / "init_db.py"
         if init_script_path.exists():
             with st.spinner("Initializing database..."):
                 result = run_init_db(init_script_path)

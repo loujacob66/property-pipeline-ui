@@ -52,12 +52,41 @@ def categorize_price(df):
     return df
 
 def enrich_dataframe(df):
-    """Apply all enrichment functions to a dataframe."""
-    df = calculate_price_per_sqft(df)
-    df = calculate_rent_yield(df)
-    df = categorize_walkscore(df)
-    df = categorize_rent_yield(df)
-    df = categorize_price(df)
+    """Add calculated fields to the dataframe"""
+    # Ensure numeric columns are float type
+    numeric_columns = ['price', 'sqft', 'beds', 'baths', 'year_built', 'estimated_rent', 'price_per_sqft']
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        else:
+            # Initialize column if it doesn't exist
+            if col == 'estimated_rent':
+                df['estimated_rent'] = pd.Series(dtype='float64')
+            elif col == 'price_per_sqft':
+                df['price_per_sqft'] = pd.Series(dtype='float64')
+    
+    # Calculate price per square foot
+    # Check if necessary columns exist before calculation
+    if 'price' in df.columns and 'sqft' in df.columns:
+        mask = (df['price'].notna()) & (df['sqft'].notna()) & (df['sqft'] > 0)
+        df.loc[mask, 'price_per_sqft'] = df.loc[mask, 'price'] / df.loc[mask, 'sqft']
+    
+    # Calculate estimated rent (using 0.8% rule) ONLY if missing or invalid
+    if 'price' in df.columns:
+        # Apply 0.8% rule only where estimated_rent is NaN AND price is valid
+        rent_missing_mask = df['estimated_rent'].isna()
+        price_valid_mask = df['price'].notna() & (df['price'] > 0)
+        combined_mask = rent_missing_mask & price_valid_mask
+        df.loc[combined_mask, 'estimated_rent'] = df.loc[combined_mask, 'price'] * 0.008
+
+    # Calculate rent yield (annual rent / price)
+    # Check if necessary columns exist before calculation
+    if 'estimated_rent' in df.columns and 'price' in df.columns:
+        if 'rent_yield' not in df.columns:
+            df['rent_yield'] = pd.Series(dtype='float64')  # Initialize as float
+        mask = (df['estimated_rent'].notna()) & (df['price'].notna()) & (df['price'] > 0)
+        df.loc[mask, 'rent_yield'] = (df['estimated_rent'] * 12) / df.loc[mask, 'price']
+    
     return df
 
 def format_currency(value):
