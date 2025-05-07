@@ -191,6 +191,7 @@ try:
 
             # Define the order and selection of columns to display
             columns_to_display_in_order = [
+                'days_on_compass',
                 'address', 
                 'city',
                 'price', 
@@ -211,6 +212,11 @@ try:
 
             # Configure column display settings
             column_config = {
+                'days_on_compass': st.column_config.NumberColumn(
+                    'Age',
+                    format="%d",
+                    width=60
+                ),
                 'address': st.column_config.TextColumn(
                     'Address',
                     width=125
@@ -268,6 +274,7 @@ try:
                     'Status',
                     width='small'
                 ),
+              
                 'url': st.column_config.LinkColumn(
                     'Compass',
                     width='medium'
