@@ -5,12 +5,76 @@ import plotly.express as px
 import plotly.graph_objects as go
 from utils.database import get_db_connection, get_all_listings
 from utils.data_processing import enrich_dataframe, format_currency, format_percentage
+from utils.script_runner import run_cashflow_analyzer
+from pathlib import Path
 
 st.set_page_config(page_title="Analytics", page_icon="📈", layout="wide")
 st.title("Property Analytics")
 
 # Get paths from session state
 db_path = st.session_state.get('db_path', "")
+scripts_path = st.session_state.get('default_scripts_path', "../property-pipeline/scripts")
+
+# --- Cashflow Analyzer Popover ---
+st.popover("Cashflow Analyzer", use_container_width=True)
+with st.container(): # Changed to st.container() for correct usage with st.popover
+    st.header("Cashflow Analyzer")
+    st.write("Analyze cashflow for a specific property by providing the necessary inputs.")
+
+    cashflow_script_path = Path(scripts_path) / "cashflow_analyzer.py"
+
+    if not cashflow_script_path.exists():
+        st.error(f"Cashflow analyzer script not found at: {cashflow_script_path}")
+        st.info("Please check the scripts path configuration.")
+    else:
+        cf_address = st.text_input("Property Address", key="cf_address_input")
+        
+        st.subheader("Financial Inputs")
+        # Default values
+        default_inputs = {
+            "down_payment": 325000.0,
+            "rate": 6.5,
+            "insurance": 4000.0,
+            "misc_monthly": 100.0,
+            "loan_term": 30
+        }
+
+        col_cf1, col_cf2 = st.columns(2)
+        with col_cf1:
+            cf_down_payment = st.number_input("Down Payment ($)", value=default_inputs["down_payment"], format="%.2f", key="cf_down_payment")
+            cf_rate = st.number_input("Interest Rate (%)", value=default_inputs["rate"], format="%.2f", key="cf_rate")
+            cf_loan_term = st.number_input("Loan Term (Years)", value=default_inputs["loan_term"], step=1, key="cf_loan_term")
+        with col_cf2:
+            cf_insurance = st.number_input("Annual Insurance ($)", value=default_inputs["insurance"], format="%.2f", key="cf_insurance")
+            cf_misc_monthly = st.number_input("Misc. Monthly Expenses ($)", value=default_inputs["misc_monthly"], format="%.2f", key="cf_misc_monthly")
+
+        if st.button("Analyze Cashflow", key="analyze_cashflow_button"):
+            if not cf_address:
+                st.warning("Please enter a property address.")
+            else:
+                with st.spinner("Analyzing cashflow..."):
+                    result = run_cashflow_analyzer(
+                        script_path=str(cashflow_script_path),
+                        address=cf_address,
+                        down_payment=cf_down_payment,
+                        rate=cf_rate,
+                        insurance=cf_insurance,
+                        misc_monthly=cf_misc_monthly,
+                        loan_term=cf_loan_term,
+                        db_path=db_path if db_path else None
+                    )
+
+                    if result['returncode'] == 0:
+                        st.success("Cashflow analysis script run successfully.")
+                        if result['stdout']:
+                            st.subheader("Analysis Result")
+                            st.text_area("Output", result['stdout'], height=200)
+                    else:
+                        st.error("Cashflow analysis script failed.")
+                    
+                    if result['stderr']:
+                        st.error("Script Errors")
+                        st.text_area("Error Output", result['stderr'], height=150)
 
 try:
     # Load all data

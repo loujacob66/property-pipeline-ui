@@ -12,6 +12,7 @@ from pathlib import Path
 import sqlite3
 from datetime import datetime
 import sys
+import json
 
 st.set_page_config(page_title="Property Explorer", page_icon="🔍", layout="wide")
 st.title("Property Explorer")
@@ -80,6 +81,24 @@ def get_blacklisted_addresses():
         return df
     except Exception as e:
         st.error(f"Error fetching blacklisted addresses: {e}")
+        return pd.DataFrame()
+
+def get_rental_history(listing_id):
+    """Get rental history for a specific listing_id."""
+    try:
+        conn = sqlite3.connect(db_path)
+        df_history = pd.read_sql_query("""
+            SELECT date, rent
+            FROM rental_history
+            WHERE listing_id = ?
+            ORDER BY date ASC
+        """, conn, params=(listing_id,))
+        conn.close()
+        # Ensure date is treated as datetime for plotting and resampling
+        df_history['date'] = pd.to_datetime(df_history['date'])
+        return df_history
+    except Exception as e:
+        st.error(f"Error fetching rental history: {e}")
         return pd.DataFrame()
 
 # --- Filter Section ---
@@ -162,7 +181,10 @@ try:
         st.warning("No properties found matching your criteria.")
     else:
         # Add tabs for different views
-        tab1, tab2, tab3, tab_lookup, tab4, tab5 = st.tabs(["Table View", "Map View", "Visual Analysis", "Quick Lookup", "Property History", "Blacklist Management"])
+        tab1, tab2, tab3, tab_rental_histories, tab_lookup, tab4, tab5, tab_cashflow = st.tabs([
+            "Table View", "Map View", "Visual Analysis", "Rental Histories", 
+            "Quick Lookup", "Property History", "Blacklist Management", "Cashflow & Appreciation"
+        ])
         
         # Add custom CSS for compact, scrollable table
         st.markdown("""
@@ -176,7 +198,47 @@ try:
         """, unsafe_allow_html=True)
 
         with tab1:
+            st.header("Quick Stats")
+            # TODO: Add logic here to fetch "Quick Stats" data.
+            # This data should include property counts by label for the last 3, 7, 14, and 30 days,
+            # as well as the total count for each label.
+            # You will likely need to add a new function to utils/database.py for this.
+
+            # TODO: Display the "Quick Stats" data here, likely in a table or similar format.
+            # Example placeholder:
+            # st.write("Quick Stats Table Placeholder")
+            # st.dataframe(quick_stats_df) # Assuming you fetch the data into quick_stats_df
+
+            st.header("Recent Listings")
+            # TODO: Add logic here to fetch the 10 most recently listed or updated properties.
+            # You will likely need to add a new function to utils/database.py for this.
+            # Ensure the fetched data includes columns necessary for the display table below.
+
+            # TODO: Display the "Recent Listings" data here.
+            # Use the existing column_config and columns_to_display_in_order for consistent formatting.
+            # Example placeholder:
+            # recent_listings_df = fetch_recent_listings(db_path) # Assuming you have this function
+            # if not recent_listings_df.empty:
+            #     # Apply formatting similar to the main table if needed (e.g., currency, percentage)
+            #     # Filter and order columns as done for the main table
+            #     recent_listings_display_df = recent_listings_df[columns_for_df].copy()
+            #     # Apply column configuration for formatting
+            #     st.dataframe(
+            #         recent_listings_display_df,
+            #         column_config=column_config, # Reuse the config from the main table
+            #         use_container_width=True,
+            #         hide_index=True
+            #     )
+            # else:
+            #     st.info("No recent listings found.")
+
+            st.write("Main Property Table:")
             display_df = df.copy()
+            
+            # Convert timestamps to local timezone
+            if 'last_updated_at' in display_df.columns:
+                display_df['last_updated_at'] = pd.to_datetime(display_df['last_updated_at']).dt.tz_localize('UTC').dt.tz_convert('America/Los_Angeles')
+            
             if 'price' in display_df.columns:
                 display_df['price'] = display_df['price'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) and isinstance(x, (int, float)) else x)
             if 'price_per_sqft' in display_df.columns:
@@ -191,6 +253,7 @@ try:
 
             # Define the order and selection of columns to display
             columns_to_display_in_order = [
+                'last_updated_at',
                 'days_on_compass',
                 'address', 
                 'city',
@@ -202,6 +265,7 @@ try:
                 'mls_type', 
                 'walk_score', 
                 'estimated_rent', 
+                'estimated_monthly_cashflow',
                 'rent_yield', 
                 'tax_information', 
                 'status',
@@ -212,6 +276,11 @@ try:
 
             # Configure column display settings
             column_config = {
+                'last_updated_at': st.column_config.DatetimeColumn(
+                    'Last Updated',
+                    format="MM/DD/YY",
+                    width='small'
+                ),
                 'days_on_compass': st.column_config.NumberColumn(
                     'Age',
                     format="%d",
@@ -261,6 +330,11 @@ try:
                     format="$%d",
                     width='small'
                 ),
+                'estimated_monthly_cashflow': st.column_config.NumberColumn(
+                    'Cashflow',
+                    format="$%d",
+                    width='small'
+                ),
                 'rent_yield': st.column_config.NumberColumn(
                     'Rent Yield',
                     format="%.1f%%",
@@ -285,7 +359,7 @@ try:
             column_config = {k: v for k, v in column_config.items() if k in display_df.columns}
 
             st.dataframe(
-                display_df[columns_for_df], # Use the selected and ordered columns
+                display_df[columns_for_df].sort_values('last_updated_at', ascending=False), # Sort by last_updated_at
                 column_config=column_config,
                 use_container_width=True,
                 hide_index=True
@@ -541,16 +615,111 @@ try:
                     fig.update_layout(xaxis_title="City", yaxis_title="Price ($)")
                     st.plotly_chart(fig, use_container_width=True)
 
+        with tab_rental_histories:
+            st.header("Rental Histories Over Time by Zip Code")
+
+            if df.empty:
+                st.warning("No properties to display rental histories for. Apply filters or ensure data is loaded.")
+            else:
+                if 'id' not in df.columns or 'zip' not in df.columns:
+                    st.error("The 'id' (listing_id) or 'zip' column is missing from the property data. Cannot fetch/aggregate rental histories by zip.")
+                else:
+                    all_histories_list = []
+                    # Ensure 'zip' is treated as string to handle variations like '94107' and '94107-1234'
+                    properties_to_fetch = df[df['id'].notna() & df['zip'].notna()].copy()
+                    properties_to_fetch['zip'] = properties_to_fetch['zip'].astype(str)
+
+                    for i, row in properties_to_fetch.iterrows():
+                        listing_id = int(row['id'])
+                        zip_code = row['zip']
+                        
+                        history_df_single = get_rental_history(listing_id)
+                        if not history_df_single.empty:
+                            history_df_single['zip'] = zip_code
+                            all_histories_list.append(history_df_single)
+
+                    if not all_histories_list:
+                        st.info("No rental history data found for the properties in the current filter.")
+                    else:
+                        combined_history_df = pd.concat(all_histories_list, ignore_index=True)
+                        
+                        if combined_history_df.empty:
+                            st.info("No rental history data found after processing.")
+                        else:
+                            combined_history_df['date'] = pd.to_datetime(combined_history_df['date'])
+                            combined_history_df = combined_history_df.sort_values(by=['zip', 'date'])
+
+                            # Aggregate to get mean rent per zip per month
+                            # Ensure 'zip' is string for consistent grouping
+                            combined_history_df['zip'] = combined_history_df['zip'].astype(str)
+                            monthly_avg_rent_by_zip = combined_history_df.groupby(
+                                ['zip', pd.Grouper(key='date', freq='MS')] # MS for Month Start
+                            )['rent'].mean().reset_index()
+                            monthly_avg_rent_by_zip = monthly_avg_rent_by_zip.rename(columns={'rent': 'average_rent'})
+
+                            if monthly_avg_rent_by_zip.empty:
+                                st.info("No aggregated monthly rental data to display.")
+                            else:
+                                st.write("### Average Monthly Rent Trends by Zip Code")
+                                
+                                unique_zips = sorted(monthly_avg_rent_by_zip['zip'].unique())
+
+                                if len(unique_zips) > 10:
+                                    default_selection = unique_zips[:5] if len(unique_zips) >= 5 else unique_zips
+                                    selected_zips_for_chart = st.multiselect(
+                                        "Select zip codes to display on chart (max 10 recommended for readability):",
+                                        options=unique_zips,
+                                        default=default_selection
+                                    )
+                                    if not selected_zips_for_chart:
+                                        st.warning("Please select at least one zip code to display.")
+                                        chart_df_agg = pd.DataFrame()
+                                    else:
+                                        chart_df_agg = monthly_avg_rent_by_zip[monthly_avg_rent_by_zip['zip'].isin(selected_zips_for_chart)]
+                                else:
+                                    chart_df_agg = monthly_avg_rent_by_zip
+
+                                if not chart_df_agg.empty:
+                                    fig = px.line(
+                                        chart_df_agg,
+                                        x='date',
+                                        y='average_rent',
+                                        color='zip',
+                                        title="Average Monthly Rent Over Time by Zip Code",
+                                        labels={'average_rent': 'Average Monthly Rent ($)', 'date': 'Date', 'zip': 'Zip Code'},
+                                        markers=True
+                                    )
+                                    fig.update_layout(
+                                        yaxis_tickformat="$,.0f",
+                                        legend_title_text='Zip Code'
+                                    )
+                                    st.plotly_chart(fig, use_container_width=True)
+                                elif len(unique_zips) > 10 and not selected_zips_for_chart:
+                                    pass # Warning already shown
+                                else:
+                                    st.info("No rental history data to chart for the current selection of zip codes or filters.")
+
         with tab_lookup:
             st.header("Quick Property Lookup")
             st.write("Paste a full or partial street address below to find a property and get quick links.")
             lookup_address = st.text_input("Find Property by Address", key="lookup_address")
+            
+            # Use session state to store lookup results and history
+            if 'lookup_result' not in st.session_state:
+                st.session_state['lookup_result'] = None
+            if 'rental_history_data' not in st.session_state:
+                st.session_state['rental_history_data'] = pd.DataFrame()
+            if 'lookup_address_display' not in st.session_state:
+                 st.session_state['lookup_address_display'] = ""
+
             if st.button("Find Property", key="find_property_button"):
                 if lookup_address.strip():
                     # Case-insensitive, substring match
                     matches = df[df['address'].str.contains(lookup_address.strip(), case=False, na=False)] if 'address' in df.columns else pd.DataFrame()
                     if not matches.empty:
                         match = matches.iloc[0]
+                        st.session_state['lookup_result'] = match
+                        st.session_state['lookup_address_display'] = match['address'] # Store for display
                         st.success(f"Found: {match['address']}")
                         # Compass link
                         if 'url' in match and pd.notna(match['url']) and match['url']:
@@ -558,10 +727,74 @@ try:
                         # WalkScore link
                         if 'walkscore_shorturl' in match and pd.notna(match['walkscore_shorturl']) and match['walkscore_shorturl']:
                             st.markdown(f"[WalkScore]({match['walkscore_shorturl']})", unsafe_allow_html=True)
+
+                        # Fetch rental history if listing_id exists
+                        if 'id' in match and pd.notna(match['id']):
+                            st.session_state['rental_history_data'] = get_rental_history(int(match['id']))
+                        else:
+                            st.session_state['rental_history_data'] = pd.DataFrame()
+                            st.info("Listing ID not found for this property, cannot fetch rental history.")
+
                     else:
+                        st.session_state['lookup_result'] = None
+                        st.session_state['rental_history_data'] = pd.DataFrame()
+                        st.session_state['lookup_address_display'] = ""
                         st.warning("No property found matching that address.")
                 else:
+                    st.session_state['lookup_result'] = None
+                    st.session_state['rental_history_data'] = pd.DataFrame()
+                    st.session_state['lookup_address_display'] = ""
                     st.info("Please enter an address to search.")
+
+            # Display rental history if available after lookup
+            if st.session_state['lookup_result'] is not None and not st.session_state['rental_history_data'].empty:
+                st.subheader(f"Rental History for {st.session_state['lookup_address_display']}")
+
+                history_df = st.session_state['rental_history_data'].copy()
+
+                # --- Quarterly Table ---
+                st.write("#### Quarterly Rental History")
+                # Resample to get the last rent recorded in each quarter
+                quarterly_history = history_df.set_index('date').resample('QS').agg(
+                    last_rent=('rent', 'last') # Get the last rent of the quarter
+                ).dropna(subset=['last_rent']).reset_index()
+                
+                # Format the quarter start date
+                quarterly_history['Quarter'] = quarterly_history['date'].dt.to_period('Q').astype(str)
+                quarterly_history['Rent'] = quarterly_history['last_rent'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "")
+
+                if not quarterly_history.empty:
+                     st.dataframe(
+                        quarterly_history[['Quarter', 'Rent']],
+                        use_container_width=True,
+                        hide_index=True
+                     )
+                else:
+                    st.info("No quarterly history available.")
+
+
+                # --- Monthly Line Chart ---
+                st.write("#### Monthly Rent Trend")
+                if not history_df.empty:
+                    fig = px.line(
+                        history_df,
+                        x="date",
+                        y="rent",
+                        title="Monthly Rent Over Time"
+                    )
+                    fig.update_layout(
+                        xaxis_title="Date",
+                        yaxis_title="Monthly Rent ($)",
+                        yaxis=dict(tickformat="$,.0f") # Format y-axis as currency
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                     st.info("No monthly history available for charting.")
+
+            elif st.session_state['lookup_result'] is not None and st.session_state['rental_history_data'].empty and st.session_state.get('lookup_address_display'):
+                 # Only show this if a property was found but had no history
+                 st.info(f"No rental history found for {st.session_state['lookup_address_display']}.")
+
 
         with tab4:
             st.header("Property History")
@@ -621,6 +854,246 @@ try:
                     st.rerun()
             else:
                 st.info("No addresses available to remove from blacklist.")
+
+            # --- Run Blacklist Expired Script ---
+            st.subheader("Clean Up Expired Blacklist Entries")
+            st.write("Run the script to automatically remove expired addresses from the blacklist based on criteria defined in the script.")
+
+            # Initialize session state for script output
+            if 'blacklist_expired_output' not in st.session_state:
+                st.session_state['blacklist_expired_output'] = ""
+
+            # Add Dry Run checkbox
+            run_expired_dry_run = st.checkbox("Dry Run (do not actually modify the database)", key="run_expired_dry_run_checkbox")
+
+            if st.button("Run Blacklist Expired Script", key="run_blacklist_expired_script_button"):
+                 # Define the path to the blacklist_expired_address.py script
+                blacklist_expired_script_path = Path(scripts_path) / "blacklist_address_expired.py"
+
+                if not blacklist_expired_script_path.exists():
+                    st.session_state['blacklist_expired_output'] = f"Error: Blacklist expired script not found at {blacklist_expired_script_path}"
+                else:
+                    try:
+                        # Execute the script
+                        cmd = [sys.executable, str(blacklist_expired_script_path)]
+                        if run_expired_dry_run:
+                            cmd.append("--dry-run")
+
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=60 # Give it a bit more time
+                        )
+                        if result.returncode == 0:
+                            st.session_state['blacklist_expired_output'] = result.stdout
+                            st.success("Blacklist expired script executed successfully.")
+                        else:
+                            st.session_state['blacklist_expired_output'] = f"Script error (exit {result.returncode}):\n{result.stderr}\n{result.stdout}"
+                            st.error("Error executing blacklist expired script.")
+                    except Exception as e:
+                        st.session_state['blacklist_expired_output'] = f"Error running script: {e}"
+                        st.error(f"Error running script: {e}")
+
+            # Display script output if available
+            if st.session_state['blacklist_expired_output']:
+                 st.markdown("#### Script Output:")
+                 st.code(st.session_state['blacklist_expired_output'])
+
+        with tab_cashflow:
+            st.header("Cashflow & Appreciation Analysis")
+            st.write("Analyze a property's potential cashflow and appreciation over time.")
+
+            # Load config file for defaults
+            config_path = Path(scripts_path).parent / "config" / "cashflow_config.json"
+            try:
+                with open(config_path, 'r') as f:
+                    cashflow_config = json.load(f)
+            except Exception as e:
+                st.warning(f"Could not load config file: {config_path}\n{e}")
+                cashflow_config = {}
+
+            # Property selection
+            selected_address = st.selectbox(
+                "Select a property to analyze:",
+                display_df['address'].unique() if not display_df.empty else []
+            )
+
+            if selected_address:
+                property_data = display_df[display_df['address'] == selected_address].iloc[0]
+                property_data_raw = df[df['address'] == selected_address].iloc[0]  # Get the original, unformatted row
+                import re
+                def parse_currency(val):
+                    if isinstance(val, str):
+                        digits = re.sub(r'[^\d.]', '', val)
+                        try:
+                            return float(digits)
+                        except Exception:
+                            return 0.0
+                    try:
+                        return float(val)
+                    except Exception:
+                        return 0.0
+
+                # Helper to get default: config > property > fallback
+                def get_default(key, prop_key=None, fallback=0.0):
+                    v = cashflow_config.get(key, None)
+                    if v is not None:
+                        try:
+                            return float(v)
+                        except Exception:
+                            return v
+                    if prop_key and prop_key in property_data:
+                        return parse_currency(property_data[prop_key])
+                    return fallback
+
+                with st.form("cashflow_analysis_form"):
+                    st.subheader("Analysis Parameters")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        down_payment = st.number_input(
+                            "Down Payment ($)",
+                            min_value=0.0,
+                            value=get_default('down_payment', 'price', 0.0),
+                            step=10000.0
+                        )
+                        interest_rate = st.number_input(
+                            "Interest Rate (%)",
+                            min_value=0.0,
+                            max_value=20.0,
+                            value=get_default('rate', None, 7.0),
+                            step=0.1
+                        )
+                        insurance = st.number_input(
+                            "Annual Insurance ($)",
+                            min_value=0.0,
+                            value=get_default('insurance', None, 2000.0),
+                            step=100.0
+                        )
+                        misc_monthly = st.number_input(
+                            "Misc Monthly Costs ($)",
+                            min_value=0.0,
+                            value=get_default('misc_monthly', None, 100.0),
+                            step=10.0
+                        )
+                        # Add rent field
+                        rent = st.number_input(
+                            "Monthly Rent ($)",
+                            min_value=0.0,
+                            value=parse_currency(property_data_raw.get('estimated_rent', 0.0)),
+                            step=50.0
+                        )
+                    with col2:
+                        loan_term = st.number_input(
+                            "Loan Term (Years)",
+                            min_value=1,
+                            max_value=30,
+                            value=int(get_default('loan_term', None, 30)),
+                            step=1
+                        )
+                        vacancy_rate = st.number_input(
+                            "Vacancy Rate (%)",
+                            min_value=0.0,
+                            max_value=100.0,
+                            value=get_default('vacancy_rate', None, 5.0),
+                            step=0.5
+                        )
+                        property_mgmt_fee = st.number_input(
+                            "Property Management Fee (%)",
+                            min_value=0.0,
+                            max_value=20.0,
+                            value=get_default('property_mgmt_fee', None, 8.0),
+                            step=0.5
+                        )
+                        investment_horizon = st.number_input(
+                            "Investment Horizon (Years)",
+                            min_value=1,
+                            max_value=30,
+                            value=int(get_default('investment_horizon', None, 5)),
+                            step=1
+                        )
+                    with st.expander("Advanced Options"):
+                        col3, col4 = st.columns(2)
+                        with col3:
+                            maintenance_percent = st.number_input(
+                                "Annual Maintenance (% of value)",
+                                min_value=0.0,
+                                max_value=10.0,
+                                value=get_default('maintenance_percent', None, 1.0),
+                                step=0.1
+                            )
+                            capex_percent = st.number_input(
+                                "Annual CapEx Reserve (% of value)",
+                                min_value=0.0,
+                                max_value=10.0,
+                                value=get_default('capex_percent', None, 1.0),
+                                step=0.1
+                            )
+                            utilities_monthly = st.number_input(
+                                "Monthly Utilities (Landlord)",
+                                min_value=0.0,
+                                value=get_default('utilities_monthly', None, 0.0),
+                                step=10.0
+                            )
+                        with col4:
+                            property_age = st.number_input(
+                                "Property Age (Years)",
+                                min_value=0,
+                                value=int(get_default('property_age', None, 20)),
+                                step=1
+                            )
+                            property_condition = st.selectbox(
+                                "Property Condition",
+                                options=["excellent", "good", "fair", "poor"],
+                                index=["excellent", "good", "fair", "poor"].index(str(cashflow_config.get('property_condition', 'good')))
+                                if cashflow_config.get('property_condition') in ["excellent", "good", "fair", "poor"] else 1
+                            )
+                            use_dynamic_capex = st.checkbox("Use Dynamic CapEx Calculations", value=bool(cashflow_config.get('use_dynamic_capex', True)))
+                    submitted = st.form_submit_button("Run Analysis")
+
+                if submitted:
+                    # Prepare command arguments
+                    cmd = [
+                        sys.executable,
+                        str(Path(scripts_path) / "appreciation_and_cashflow_analyzer.py"),
+                        "--address", selected_address,
+                        "--down-payment", str(down_payment),
+                        "--rate", str(interest_rate),
+                        "--insurance", str(insurance),
+                        "--misc-monthly", str(misc_monthly),
+                        "--loan-term", str(loan_term),
+                        "--vacancy-rate", str(vacancy_rate),
+                        "--property-mgmt-fee", str(property_mgmt_fee),
+                        "--investment-horizon", str(investment_horizon),
+                        "--maintenance-percent", str(maintenance_percent),
+                        "--capex-percent", str(capex_percent),
+                        "--utilities-monthly", str(utilities_monthly),
+                        "--property-age", str(property_age),
+                        "--property-condition", property_condition
+                    ]
+
+                    if rent > 0:
+                        cmd.extend(["--rent", str(rent)])
+
+                    if use_dynamic_capex:
+                        cmd.append("--use-dynamic-capex")
+
+                    # Run the analysis
+                    try:
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=60
+                        )
+                        
+                        if result.returncode == 0:
+                            st.success("Analysis completed successfully!")
+                            st.code(result.stdout)
+                        else:
+                            st.error(f"Error running analysis: {result.stderr}")
+                    except Exception as e:
+                        st.error(f"Error running analysis: {str(e)}")
 
 except Exception as e:
     st.error(f"Error: {e}")

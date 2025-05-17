@@ -3,10 +3,11 @@ import pandas as pd
 import plotly.express as px
 from pathlib import Path
 from utils.database import get_db_connection, get_all_listings, get_summary_stats
+from utils.data_processing import enrich_dataframe, format_currency, format_percentage
 
 # Configuration
 st.set_page_config(
-    page_title="Property Pipeline Dashboard",
+    page_title="Dashboard",
     page_icon="🏠",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -33,7 +34,6 @@ with st.sidebar:
     # Quick links
     st.subheader("Quick Links")
     st.write("Navigate to:")
-    st.page_link("pages/01_Dashboard.py", label="📊 Dashboard", icon="📊")
     st.page_link("pages/02_Property_Explorer.py", label="🔍 Property Explorer", icon="🔍")
     st.page_link("pages/03_Data_Enrichment.py", label="🔄 Data Enrichment", icon="🔄")
     st.page_link("pages/04_Analytics.py", label="📈 Analytics", icon="📈")
@@ -49,13 +49,14 @@ Use the sidebar to navigate between different views.
 try:
     # Try to connect to the database
     conn = get_db_connection(db_path)
-    df = get_all_listings(db_path, limit=5)
+    df = get_all_listings(db_path, limit=1000)  # Increased limit to show more data
     conn.close()
     
     if df.empty:
         st.warning("Database connected, but no data found. Use the Data Enrichment page to populate your database.")
     else:
-        pass
+        # Enrich the dataframe with calculated fields
+        df = enrich_dataframe(df)
         
         # Display some key metrics
         st.header("Quick Stats")
@@ -89,11 +90,136 @@ try:
                 else:
                     st.metric("Avg Price/Sqft", "N/A")
             
-            # Sample of recent listings
-            st.header("Recent Listings")
-            # Select all rows and columns starting from the third column (index 2)
-            df_display = df.iloc[:, 1:]
-            st.dataframe(df_display, use_container_width=True)
+            # Recent listings with enhanced table (matching Property Explorer)
+            st.header("Recent Updates")
+            st.write("Main Property Table:")
+            display_df = df.copy()
+
+            # Convert timestamps to local timezone
+            if 'last_updated_at' in display_df.columns:
+                display_df['last_updated_at'] = pd.to_datetime(display_df['last_updated_at']).dt.tz_localize('UTC').dt.tz_convert('America/Los_Angeles')
+
+            if 'price' in display_df.columns:
+                display_df['price'] = display_df['price'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) and isinstance(x, (int, float)) else x)
+            if 'price_per_sqft' in display_df.columns:
+                display_df['price_per_sqft'] = display_df['price_per_sqft'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) and isinstance(x, (int, float)) else x)
+            if 'estimated_rent' in display_df.columns:
+                display_df['estimated_rent'] = display_df['estimated_rent'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) and isinstance(x, (int, float)) else x)
+            if 'rent_yield' in display_df.columns:
+                display_df['rent_yield'] = display_df['rent_yield'].apply(lambda x: x * 100 if pd.notna(x) and isinstance(x, (int, float)) else x)
+            if 'walk_score' in display_df.columns:
+                display_df['walk_score'] = display_df['walk_score'].apply(lambda x: f"{int(x)}" if pd.notna(x) and isinstance(x, (int, float)) else x)
+
+            # Define the order and selection of columns to display (matching Property Explorer)
+            columns_to_display_in_order = [
+                'last_updated_at',
+                'days_on_compass',
+                'address', 
+                'city',
+                'price',
+                'status', 
+                'beds', 
+                'baths', 
+                'sqft', 
+                'price_per_sqft',
+                'mls_type', 
+                'walk_score', 
+                'estimated_rent', 
+                'estimated_monthly_cashflow',
+                'rent_yield', 
+                'tax_information', 
+                'url'
+            ]
+            columns_for_df = [col for col in columns_to_display_in_order if col in display_df.columns]
+
+            # Configure column display settings (matching Property Explorer)
+            column_config = {
+                'last_updated_at': st.column_config.DatetimeColumn(
+                    'Last Update',
+                    format="MM/DD/YY",
+                    width=90
+                ),
+                'days_on_compass': st.column_config.NumberColumn(
+                    'Age',
+                    format="%d",
+                    width=40
+                ),
+                'address': st.column_config.TextColumn(
+                    'Address',
+                    width=175
+                ),
+                'city': st.column_config.TextColumn(
+                    'City',
+                    width=110
+                ),
+                'price': st.column_config.NumberColumn(
+                    'Price',
+                    format="$%d",
+                    width='small'
+                ),
+                 'status': st.column_config.TextColumn(
+                    'Status',
+                    width='small'
+                ),
+                'beds': st.column_config.NumberColumn(
+                    'Beds',
+                    width=40
+                ),
+                'baths': st.column_config.NumberColumn(
+                    'Baths',
+                    width=50
+                ),
+                'sqft': st.column_config.NumberColumn(
+                    'Sq Ft',
+                    format="%d",
+                    width=60
+                ),
+                'price_per_sqft': st.column_config.NumberColumn(
+                    '$/SQFT',
+                    format="$%d",
+                    width=60
+                ),
+                'mls_type': st.column_config.TextColumn(
+                    'MLS Type',
+                    width='small'
+                ),
+                'walk_score': st.column_config.NumberColumn(
+                    'Walk Score',
+                    width='small'
+                ),
+                'estimated_rent': st.column_config.NumberColumn(
+                    'Est. Rent',
+                    format="$%d",
+                    width='small'
+                ),
+                'estimated_monthly_cashflow': st.column_config.NumberColumn(
+                    'Cashflow',
+                    format="$%d",
+                    width='small'
+                ),
+                'rent_yield': st.column_config.NumberColumn(
+                    'Rent Yield',
+                    format="%.1f%%",
+                    width='small'
+                ),
+                'tax_information': st.column_config.TextColumn(
+                    'Tax Details',
+                    width='small'
+                ),
+               
+                'url': st.column_config.LinkColumn(
+                    'Compass',
+                    width='medium'
+                )
+            }
+            column_config = {k: v for k, v in column_config.items() if k in display_df.columns}
+
+            st.dataframe(
+                display_df[columns_for_df].sort_values('last_updated_at', ascending=False),
+                column_config=column_config,
+                use_container_width=True,
+                hide_index=True
+            )
             
             # Link to explore more
             st.write("Use the Property Explorer page to see more listings and apply filters.")

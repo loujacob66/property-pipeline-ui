@@ -7,6 +7,7 @@ from utils.script_runner import (
     run_gmail_parser, 
     run_compass_enrichment, 
     run_walkscore_enrichment,
+    run_cashflow_enrichment,
     get_script_progress
 )
 from utils.database import get_db_connection, get_all_listings
@@ -25,7 +26,8 @@ tab_names = [
     "Enrichment Dashboard", 
     "Gmail Parser", 
     "Compass Enrichment", 
-    "WalkScore Enrichment"
+    "WalkScore Enrichment",
+    "Cashflow Enrichment"
 ]
 current_tab_name = st.query_params.get("tab", tab_names[0])
 if current_tab_name not in tab_names:
@@ -51,7 +53,7 @@ if selected_tab == "Enrichment Dashboard":
         else:
             st.subheader("Database Summary")
             
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3, col4, col5 = st.columns(5)
             
             with col1:
                 total_properties = len(df)
@@ -59,21 +61,28 @@ if selected_tab == "Enrichment Dashboard":
             
             with col2:
                 has_mls = df['mls_number'].notna().sum()
-                st.metric("With MLS Data", f"{has_mls:,}", f"{has_mls/total_properties:.1%}")
+                st.metric("With MLS Data", f"{has_mls:,}", f"{has_mls/total_properties:.1%}" if total_properties > 0 else "0.0%")
             
             with col3:
                 has_tax = df['tax_information'].notna().sum()
-                st.metric("With Tax Info", f"{has_tax:,}", f"{has_tax/total_properties:.1%}")
+                st.metric("With Tax Info", f"{has_tax:,}", f"{has_tax/total_properties:.1%}" if total_properties > 0 else "0.0%")
             
             with col4:
                 has_walkscore = df['walk_score'].notna().sum()
-                st.metric("With WalkScore", f"{has_walkscore:,}", f"{has_walkscore/total_properties:.1%}")
-            
+                st.metric("With WalkScore", f"{has_walkscore:,}", f"{has_walkscore/total_properties:.1%}" if total_properties > 0 else "0.0%")
+
+            with col5:
+                if 'estimated_monthly_cashflow' in df.columns:
+                    has_cashflow = df['estimated_monthly_cashflow'].notna().sum()
+                    st.metric("With Cashflow Data", f"{has_cashflow:,}", f"{has_cashflow/total_properties:.1%}" if total_properties > 0 else "0.0%")
+                else:
+                    st.metric("With Cashflow Data", "0", "0.0%")
+
             enrichment_needed = get_properties_needing_enrichment(df)
             
             st.subheader("Enrichment Needs")
             
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             
             with col1:
                 walkscore_missing = len(enrichment_needed['walkscore_missing'])
@@ -96,18 +105,28 @@ if selected_tab == "Enrichment Dashboard":
                 st.metric("Need Tax Data", f"{tax_missing:,}")
                 
                 if tax_missing > 0:
-                    st.button("Run Compass Enrichment", key="run_compass_tax_dash", 
+                    st.button("Run Compass Enrichment", key="run_compass_tax_dash",
                               on_click=lambda: st.session_state.update({"active_tab": "Compass Enrichment"}))
+
+            with col4:
+                cashflow_missing_count = len(enrichment_needed.get('cashflow_missing', []))
+                st.metric("Need Cashflow Data", f"{cashflow_missing_count:,}")
+
+                if cashflow_missing_count > 0:
+                    st.button("Run Cashflow Enrichment", key="run_cashflow_dash",
+                              on_click=lambda: st.session_state.update({"active_tab": "Cashflow Enrichment"}))
 
             if 'active_tab' in st.session_state:
                 if st.session_state['active_tab'] == 'Compass Enrichment':
                     st.info('Switching to Compass Enrichment...')
                 elif st.session_state['active_tab'] == 'WalkScore Enrichment':
                     st.info('Switching to WalkScore Enrichment...')
+                elif st.session_state['active_tab'] == 'Cashflow Enrichment':
+                    st.info('Switching to Cashflow Enrichment...')
             
     except Exception as e:
-        st.error(f"Error connecting to database: {e}")
-        st.info(f"Make sure the database exists at: {db_path}")
+        st.error(f"Error connecting to database or processing data: {e}")
+        st.info(f"Make sure the database exists at: {db_path} and the schema is as expected.")
 
 elif selected_tab == "Gmail Parser":
     st.header("Gmail Parser")
@@ -223,11 +242,19 @@ elif selected_tab == "Compass Enrichment":
                 
                 # Display output in expandable sections
                 with st.expander("Script Output", expanded=result['returncode'] != 0):
-                    st.text_area("Output", result['stdout'], height=300)
-                    
-                    if result['stderr']:
+                    # Separate stdout into info/warning and error messages
+                    stdout_lines = result['stdout'].splitlines()
+                    info_warning_output = "\n".join([line for line in stdout_lines if " - INFO -" in line or " - WARNING -" in line])
+                    error_output = "\n".join([line for line in stdout_lines if " - ERROR -" in line])
+
+                    if info_warning_output:
+                        st.text_area("Output", info_warning_output, height=300)
+
+                    if result['stderr'] or error_output:
                         st.error("Errors")
-                        st.text_area("Error Output", result['stderr'], height=150)
+                        # Combine stderr and parsed error messages from stdout
+                        combined_error_output = (result['stderr'] + "\n" + error_output).strip()
+                        st.text_area("Error Output", combined_error_output, height=150)
 
 elif selected_tab == "WalkScore Enrichment":
     st.header("WalkScore Enrichment")
@@ -269,22 +296,97 @@ elif selected_tab == "WalkScore Enrichment":
                 
                 # Display output in expandable sections
                 with st.expander("Script Output", expanded=result['returncode'] != 0):
-                    st.text_area("Output", result['stdout'], height=300)
-                    
-                    if result['stderr']:
+                    # Separate stdout into info/warning and error messages
+                    stdout_lines = result['stdout'].splitlines()
+                    info_warning_output = "\n".join([line for line in stdout_lines if " - INFO -" in line or " - WARNING -" in line])
+                    error_output = "\n".join([line for line in stdout_lines if " - ERROR -" in line])
+
+                    if info_warning_output:
+                        st.text_area("Output", info_warning_output, height=300)
+
+                    if result['stderr'] or error_output:
                         st.error("Errors")
-                        st.text_area("Error Output", result['stderr'], height=150)
+                        # Combine stderr and parsed error messages from stdout
+                        combined_error_output = (result['stderr'] + "\n" + error_output).strip()
+                        st.text_area("Error Output", combined_error_output, height=150)
+
+elif selected_tab == "Cashflow Enrichment":
+    st.header("Cashflow Enrichment")
+    st.write("Enrich property listings with estimated monthly cashflow based on financial parameters.")
+
+    cashflow_script_path = Path(scripts_path) / "enrich_with_cashflow.py"
+    default_cashflow_config_path = Path(config_path) / "cashflow_config.json"
+
+    if not cashflow_script_path.exists():
+        st.error(f"Cashflow enrichment script not found at: {cashflow_script_path}")
+        st.info("Please check the scripts path configuration.")
+    else:
+        col1, col2 = st.columns(2)
+
+        with col1:
+            cashflow_config_file = st.text_input("Config File Path", value=str(default_cashflow_config_path))
+            limit = st.number_input("Max listings to process (Limit)", min_value=1, value=10, key="cashflow_limit")
+            dry_run = st.checkbox("Dry Run (Preview without DB insertion)", key="cashflow_dry_run")
+        
+        with col2:
+            force_update = st.checkbox("Force Update (Recalculate existing values)", key="cashflow_force_update")
+            address = st.text_input("Process Specific Address (optional)", value="", key="cashflow_address")
+
+        if st.button("Run Cashflow Enrichment"):
+            if not cashflow_config_file:
+                st.error("Please enter a config file path for cashflow enrichment.")
+            else:
+                with st.spinner("Running Cashflow Enrichment..."):
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    result = run_cashflow_enrichment(
+                        script_path=str(cashflow_script_path),
+                        config_path=cashflow_config_file,
+                        db_path=db_path if db_path else None,
+                        limit=limit, 
+                        dry_run=dry_run,
+                        force_update=force_update,
+                        address=address if address else None
+                    )
+                    
+                    if result['stdout']:
+                        progress_info = get_script_progress(result['stdout'])
+                        if progress_info and progress_info['total'] > 0:
+                            progress = min(progress_info['processed'] / progress_info['total'], 1.0)
+                            progress_bar.progress(progress)
+                            status_text.text(progress_info['last_message'])
+                    
+                    if result['returncode'] == 0:
+                        st.success("Cashflow Enrichment completed successfully")
+                    else:
+                        st.error("Cashflow Enrichment failed")
+                    
+                    with st.expander("Script Output", expanded=result['returncode'] != 0):
+                        stdout_lines = result['stdout'].splitlines()
+                        info_warning_output = "\n".join([line for line in stdout_lines if " - INFO -" in line or " - WARNING -" in line])
+                        error_output_stdout = "\n".join([line for line in stdout_lines if " - ERROR -" in line])
+
+                        if info_warning_output:
+                            st.text_area("Output", info_warning_output, height=300)
+
+                        if result['stderr'] or error_output_stdout:
+                            st.error("Errors")
+                            combined_error_output = (result['stderr'] + "\n" + error_output_stdout).strip()
+                            st.text_area("Error Output", combined_error_output, height=150)
 
 # Handle tab switching from dashboard buttons
 if 'active_tab' in st.session_state:
-    active_tab = st.session_state.pop('active_tab', None) # Pop the state immediately
+    active_tab = st.session_state.pop('active_tab', None)
     if active_tab:
         tab_to_switch_to = None
         if active_tab == "WalkScore Enrichment":
             tab_to_switch_to = "WalkScore Enrichment"
         elif active_tab == "Compass Enrichment":
             tab_to_switch_to = "Compass Enrichment"
+        elif active_tab == "Cashflow Enrichment":
+            tab_to_switch_to = "Cashflow Enrichment"
         
         if tab_to_switch_to:
             st.query_params["tab"] = tab_to_switch_to
-            st.rerun() # Force a script rerun to reflect the tab change
+            st.rerun()

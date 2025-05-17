@@ -17,7 +17,9 @@ def get_all_listings(db_path, limit=None):
         "hoa_fee", "parking", "heating", "cooling", "style", "construction",
         "days_on_market", "status", "agent_name", "agent_phone", "agent_email",
         "schools_json", "price_history_json", "walk_score", "transit_score", "bike_score",
-        "walkscore_shorturl", "compass_shorturl", "latitude", "longitude", "created_at", "last_updated_at"
+        "walkscore_shorturl", "compass_shorturl", "latitude", "longitude",
+        "estimated_monthly_cashflow",
+        "created_at", "last_updated_at"
     ]
     query = f"SELECT {', '.join([f'\"{col}\"' for col in columns])} FROM listings" # Quote column names
     if limit:
@@ -39,7 +41,8 @@ def get_all_listings(db_path, limit=None):
             'transit_score': 'float64',
             'bike_score': 'float64',
             'latitude': 'float64',
-            'longitude': 'float64'
+            'longitude': 'float64',
+            'estimated_monthly_cashflow': 'float64'
         }
         
         df = pd.read_sql_query(query, conn, dtype=dtype_dict)
@@ -66,7 +69,9 @@ def get_filtered_listings(db_path, filters=None):
         "hoa_fee", "parking", "heating", "cooling", "style", "construction",
         "days_on_market", "status", "agent_name", "agent_phone", "agent_email",
         "schools_json", "price_history_json", "walk_score", "transit_score", "bike_score",
-        "walkscore_shorturl", "compass_shorturl", "latitude", "longitude", "created_at", "last_updated_at"
+        "walkscore_shorturl", "compass_shorturl", "latitude", "longitude",
+        "estimated_monthly_cashflow",
+        "created_at", "last_updated_at"
     ]
     # Quote column names in SELECT statement
     query = f"""

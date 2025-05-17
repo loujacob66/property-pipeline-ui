@@ -118,9 +118,19 @@ def get_properties_needing_enrichment(df):
     
     # Properties missing tax info
     tax_missing = df[df['tax_information'].isna()]
+
+    # Properties missing cashflow info
+    # Ensure the column exists, otherwise treat all as missing if it's expected
+    if 'estimated_monthly_cashflow' in df.columns:
+        cashflow_missing = df[df['estimated_monthly_cashflow'].isna()]
+    else:
+        # If the column doesn't exist, consider all properties as needing this enrichment
+        # or handle as per requirements (e.g., create an empty DataFrame for now)
+        cashflow_missing = df.copy() # Or pd.DataFrame(columns=df.columns) if you want it empty
     
     return {
         'walkscore_missing': walkscore_missing,
         'mls_missing': mls_missing,
-        'tax_missing': tax_missing
+        'tax_missing': tax_missing,
+        'cashflow_missing': cashflow_missing
     }

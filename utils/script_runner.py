@@ -56,9 +56,43 @@ def run_walkscore_enrichment(script_path):
     """Run the WalkScore enrichment script."""
     return run_script(script_path)
 
+def run_cashflow_enrichment(script_path, config_path=None, db_path=None, limit=None, dry_run=False, force_update=False, address=None):
+    """Run the Cashflow enrichment script."""
+    args = []
+
+    if config_path:
+        args.extend(["--config-path", config_path])
+    if db_path:
+        args.extend(["--db-path", db_path])
+    if limit:
+        args.extend(["--limit", str(limit)])
+    if dry_run:
+        args.append("--dry-run")
+    if force_update:
+        args.append("--force-update")
+    if address:
+        args.extend(["--address", address])
+    
+    return run_script(script_path, args)
+
 def run_init_db(script_path):
     """Run the database initialization script."""
     return run_script(script_path)
+
+def run_cashflow_analyzer(script_path, address, down_payment, rate, insurance, misc_monthly, loan_term=None, db_path=None):
+    """Run the Cashflow Analyzer script."""
+    args = ["--address", address]
+    args.extend(["--down-payment", str(down_payment)])
+    args.extend(["--rate", str(rate)])
+    args.extend(["--insurance", str(insurance)])
+    args.extend(["--misc-monthly", str(misc_monthly)])
+
+    if loan_term:
+        args.extend(["--loan-term", str(loan_term)])
+    if db_path:
+        args.extend(["--db-path", db_path])
+    
+    return run_script(script_path, args)
 
 def get_script_progress(result_stdout):
     """Parse script output to get progress information."""
