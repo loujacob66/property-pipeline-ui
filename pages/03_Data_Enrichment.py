@@ -187,74 +187,191 @@ elif selected_tab == "Compass Enrichment":
     st.header("Compass Enrichment")
     st.write("Enrich property listings with data from Compass. This will add MLS numbers, tax information, and other details.")
     
+    # Add instructions
+    st.info("""
+    **How to use:**
+    1. **Select specific properties** using the checkboxes in the table below, OR
+    2. **Use the limit parameter** to process the first N properties (if no checkboxes are selected)
+    
+    Then click "Run Compass Enrichment" to start the process.
+    """)
+    
     compass_script_path = Path(scripts_path) / "enrich_with_compass.py"
     
     if not compass_script_path.exists():
         st.error(f"Compass enrichment script not found at: {compass_script_path}")
         st.info("Please check the scripts path configuration.")
     else:
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            limit = st.number_input("Limit (Max listings to process)", min_value=1, value=10)
-            update_db = st.checkbox("Update Database", value=True,
-                                  help="Update the database with enriched data")
-        
-        with col2:
-            output_dir = Path(config_path) / "enriched"
-            output_dir.mkdir(parents=True, exist_ok=True)
+        # Get all properties
+        try:
+            conn = get_db_connection(db_path)
+            df = get_all_listings(db_path)
             
-            import datetime
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            default_output_file = str(output_dir / f"enriched_listings_{timestamp}.json")
-            
-            output_file = st.text_input("Output File", value=default_output_file)
-            address = st.text_input("Process Specific Address (optional)", value="")
-        
-        if st.button("Run Compass Enrichment"):
-            with st.spinner("Running Compass Enrichment..."):
-                # Create a progress bar
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+            if df.empty:
+                st.warning("No properties found in the database.")
+            else:
+                # Sort by db_updated_at in descending order (most recent first)
+                if 'db_updated_at' in df.columns:
+                    df['db_updated_at'] = pd.to_datetime(df['db_updated_at'], errors='coerce')
+                    df = df.sort_values('db_updated_at', ascending=False)
                 
-                # Run the script
-                result = run_compass_enrichment(
-                    script_path=compass_script_path,
-                    output=output_file,
-                    limit=limit,
-                    headless=False,
-                    update_db=update_db,
-                    address=address if address else None
+                df['selected'] = False  # Add checkbox column
+                
+                # Configure columns for display
+                column_config = {
+                    'selected': st.column_config.CheckboxColumn(
+                        'Select',
+                        help="Select properties to enrich",
+                        default=False,
+                        width='small'
+                    ),
+                    'address': st.column_config.TextColumn(
+                        'Address',
+                        width='medium'
+                    ),
+                    'db_updated_at': st.column_config.DatetimeColumn(
+                        'DB Update',
+                        format="MM/DD/YY",
+                        width=90
+                    ),
+                    'city': st.column_config.TextColumn(
+                        'City',
+                        width='small'
+                    ),
+                    'days_on_compass': st.column_config.NumberColumn(
+                        'Days on Compass',
+                        format="%d",
+                        width='small'
+                    ),
+                    'price': st.column_config.NumberColumn(
+                        'Price',
+                        format="$%d",
+                        width='small'
+                    ),
+                    'beds': st.column_config.NumberColumn(
+                        'Beds',
+                        width='small'
+                    ),
+                    'baths': st.column_config.NumberColumn(
+                        'Baths',
+                        width='small'
+                    ),
+                    'sqft': st.column_config.NumberColumn(
+                        'Sq Ft',
+                        format="%d",
+                        width='small'
+                    ),
+                    'mls_number': st.column_config.TextColumn(
+                        'MLS Number',
+                        width='small'
+                    ),
+                    'mls_type': st.column_config.TextColumn(
+                        'MLS Type',
+                        width='small'
+                    ),
+                    'tax_information': st.column_config.TextColumn(
+                        'Tax Info',
+                        width='small'
+                    )
+                }
+                
+                st.subheader("Properties")
+                edited_df = st.data_editor(
+                    df[['selected', 'address', 'db_updated_at', 'city', 'days_on_compass', 'price', 'beds', 'baths', 'sqft', 'mls_number', 'mls_type', 'tax_information']],
+                    column_config=column_config,
+                    use_container_width=True,
+                    hide_index=True
                 )
                 
-                # Update progress based on output
-                if result['stdout']:
-                    progress_info = get_script_progress(result['stdout'])
-                    if progress_info and progress_info['total'] > 0:
-                        progress = min(progress_info['processed'] / progress_info['total'], 1.0)
-                        progress_bar.progress(progress)
-                        status_text.text(progress_info['last_message'])
+                # Get selected addresses
+                selected_addresses = edited_df[edited_df['selected']]['address'].tolist()
                 
-                if result['returncode'] == 0:
-                    st.success("Compass Enrichment completed successfully")
-                else:
-                    st.error("Compass Enrichment failed")
+                col1, col2 = st.columns(2)
                 
-                # Display output in expandable sections
-                with st.expander("Script Output", expanded=result['returncode'] != 0):
-                    # Separate stdout into info/warning and error messages
-                    stdout_lines = result['stdout'].splitlines()
-                    info_warning_output = "\n".join([line for line in stdout_lines if " - INFO -" in line or " - WARNING -" in line])
-                    error_output = "\n".join([line for line in stdout_lines if " - ERROR -" in line])
+                with col1:
+                    limit = st.number_input("Limit (Used only when no addresses are selected)", min_value=1, value=10)
+                    update_db = st.checkbox("Update Database", value=True,
+                                          help="Update the database with enriched data")
+                
+                with col2:
+                    output_dir = Path(config_path) / "enriched"
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    import datetime
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    default_output_file = str(output_dir / f"enriched_listings_{timestamp}.json")
+                    
+                    output_file = st.text_input("Output File", value=default_output_file)
+                
+                if st.button("Run Compass Enrichment"):
+                    with st.spinner("Running Compass Enrichment..."):
+                        # Create a progress bar
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        # Determine what to process
+                        if selected_addresses:
+                            # Process selected addresses
+                            addresses_to_process = selected_addresses
+                            status_text.text(f"Processing {len(addresses_to_process)} selected addresses...")
+                        else:
+                            # Get properties that need enrichment
+                            enrichment_needed = get_properties_needing_enrichment(df)
+                            properties_needing_enrichment = pd.concat([
+                                enrichment_needed['mls_missing'],
+                                enrichment_needed['tax_missing']
+                            ]).drop_duplicates(subset=['address'])
+                            
+                            # Take the first N properties that need enrichment
+                            addresses_to_process = properties_needing_enrichment['address'].head(limit).tolist()
+                            status_text.text(f"Processing {len(addresses_to_process)} properties that need enrichment...")
+                        
+                        # Run the script for each address
+                        for i, address in enumerate(addresses_to_process):
+                            try:
+                                # Update progress
+                                progress = (i + 1) / len(addresses_to_process)
+                                progress_bar.progress(progress)
+                                status_text.text(f"Processing {i + 1} of {len(addresses_to_process)}: {address}")
+                                
+                                # Run the script with the address parameter
+                                result = run_compass_enrichment(
+                                    script_path=compass_script_path,
+                                    output=output_file,
+                                    limit=None if selected_addresses else limit,  # Only use limit if no addresses selected
+                                    update_db=update_db,
+                                    address=address
+                                )
+                                
+                                if result['returncode'] == 0:
+                                    st.success(f"Compass Enrichment completed successfully for {address}")
+                                else:
+                                    st.error(f"Compass Enrichment failed for {address}")
+                                
+                                # Display output in expandable sections
+                                with st.expander(f"Script Output for {address}", expanded=result['returncode'] != 0):
+                                    # Separate stdout into info/warning and error messages
+                                    stdout_lines = result['stdout'].splitlines()
+                                    info_warning_output = "\n".join([line for line in stdout_lines if " - INFO -" in line or " - WARNING -" in line])
+                                    error_output = "\n".join([line for line in stdout_lines if " - ERROR -" in line])
 
-                    if info_warning_output:
-                        st.text_area("Output", info_warning_output, height=300)
+                                    if info_warning_output:
+                                        st.text_area("Output", info_warning_output, height=300)
 
-                    if result['stderr'] or error_output:
-                        st.error("Errors")
-                        # Combine stderr and parsed error messages from stdout
-                        combined_error_output = (result['stderr'] + "\n" + error_output).strip()
-                        st.text_area("Error Output", combined_error_output, height=150)
+                                    if result['stderr'] or error_output:
+                                        st.error("Errors")
+                                        # Combine stderr and parsed error messages from stdout
+                                        combined_error_output = (result['stderr'] + "\n" + error_output).strip()
+                                        st.text_area("Error Output", combined_error_output, height=150)
+                            except Exception as e:
+                                st.error(f"Error processing {address}: {str(e)}")
+                        
+                        # Refresh the page to show updated data
+                        st.rerun()
+                
+        except Exception as e:
+            st.error(f"Error loading properties: {e}")
+            st.info("Please check your database connection and try again.")
 
 elif selected_tab == "WalkScore Enrichment":
     st.header("WalkScore Enrichment")

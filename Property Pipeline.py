@@ -96,8 +96,9 @@ try:
             display_df = df.copy()
 
             # Convert timestamps to local timezone
-            if 'last_updated_at' in display_df.columns:
-                display_df['last_updated_at'] = pd.to_datetime(display_df['last_updated_at']).dt.tz_localize('UTC').dt.tz_convert('America/Los_Angeles')
+            if 'last_updated' in display_df.columns:
+                display_df['last_updated'] = pd.to_datetime(display_df['last_updated'], format='mixed', errors='coerce')
+                display_df['last_updated'] = display_df['last_updated'].dt.tz_localize('UTC').dt.tz_convert('America/Los_Angeles')
 
             if 'price' in display_df.columns:
                 display_df['price'] = display_df['price'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) and isinstance(x, (int, float)) else x)
@@ -112,7 +113,8 @@ try:
 
             # Define the order and selection of columns to display (matching Property Explorer)
             columns_to_display_in_order = [
-                'last_updated_at',
+                'last_updated',
+                'db_updated_at',
                 'days_on_compass',
                 'address', 
                 'city',
@@ -132,10 +134,15 @@ try:
             ]
             columns_for_df = [col for col in columns_to_display_in_order if col in display_df.columns]
 
-            # Configure column display settings (matching Property Explorer)
+            # Configure column display settings
             column_config = {
-                'last_updated_at': st.column_config.DatetimeColumn(
+                'last_updated': st.column_config.DatetimeColumn(
                     'Last Update',
+                    format="MM/DD/YY",
+                    width=90
+                ),
+                'db_updated_at': st.column_config.DatetimeColumn(
+                    'DB Update',
                     format="MM/DD/YY",
                     width=90
                 ),
@@ -206,7 +213,6 @@ try:
                     'Tax Details',
                     width='small'
                 ),
-               
                 'url': st.column_config.LinkColumn(
                     'Compass',
                     width='medium'
@@ -215,7 +221,7 @@ try:
             column_config = {k: v for k, v in column_config.items() if k in display_df.columns}
 
             st.dataframe(
-                display_df[columns_for_df].sort_values('last_updated_at', ascending=False),
+                display_df[columns_for_df].sort_values('last_updated', ascending=False),
                 column_config=column_config,
                 use_container_width=True,
                 hide_index=True

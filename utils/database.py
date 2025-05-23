@@ -18,13 +18,11 @@ def get_all_listings(db_path, limit=None):
         "days_on_market", "status", "agent_name", "agent_phone", "agent_email",
         "schools_json", "price_history_json", "walk_score", "transit_score", "bike_score",
         "walkscore_shorturl", "compass_shorturl", "latitude", "longitude",
-        "estimated_monthly_cashflow",
-        "created_at", "last_updated_at"
+        "created_at", "estimated_monthly_cashflow", "db_updated_at"
     ]
-    query = f"SELECT {', '.join([f'\"{col}\"' for col in columns])} FROM listings" # Quote column names
+    query = f"SELECT {', '.join([f'\"{col}\"' for col in columns])} FROM listings"
     if limit:
         query += f" LIMIT {limit}"
-    
     try:
         # Define dtype dictionary for numeric columns
         dtype_dict = {
@@ -44,16 +42,12 @@ def get_all_listings(db_path, limit=None):
             'longitude': 'float64',
             'estimated_monthly_cashflow': 'float64'
         }
-        
         df = pd.read_sql_query(query, conn, dtype=dtype_dict)
         conn.close()
         return df
     except Exception as e:
-        # Log or handle error, maybe return column names that failed
         print(f"Error executing query: {query}")
         print(f"Error: {e}")
-        # Try SELECT * as a fallback for debugging? Or raise error.
-        # For now, let's return an empty df if specific columns fail
         conn.close()
         return pd.DataFrame()
 
@@ -70,10 +64,8 @@ def get_filtered_listings(db_path, filters=None):
         "days_on_market", "status", "agent_name", "agent_phone", "agent_email",
         "schools_json", "price_history_json", "walk_score", "transit_score", "bike_score",
         "walkscore_shorturl", "compass_shorturl", "latitude", "longitude",
-        "estimated_monthly_cashflow",
-        "created_at", "last_updated_at"
+        "created_at", "estimated_monthly_cashflow", "db_updated_at"
     ]
-    # Quote column names in SELECT statement
     query = f"""
         SELECT {', '.join([f'\"{col}\"' for col in columns])} 
         FROM listings l
@@ -84,11 +76,9 @@ def get_filtered_listings(db_path, filters=None):
         )
     """
     params = []
-    
     if filters:
         for column, value in filters.items():
             if isinstance(value, tuple) and len(value) == 2:
-                # Range filter (min, max)
                 min_val, max_val = value
                 if min_val is not None:
                     query += f" AND {column} >= ?"
@@ -97,23 +87,20 @@ def get_filtered_listings(db_path, filters=None):
                     query += f" AND {column} <= ?"
                     params.append(max_val)
             elif isinstance(value, tuple) and value[0] == "IS NOT NULL":
-                # Handle IS NOT NULL condition
                 query += f" AND {column} IS NOT NULL"
             else:
-                # Exact match
                 query += f" AND {column} = ?"
                 params.append(value)
-    
     try:
         df = pd.read_sql_query(query, conn, params=params)
         conn.close()
         return df
     except Exception as e:
-         print(f"Error executing query: {query}")
-         print(f"Params: {params}")
-         print(f"Error: {e}")
-         conn.close()
-         return pd.DataFrame()
+        print(f"Error executing query: {query}")
+        print(f"Params: {params}")
+        print(f"Error: {e}")
+        conn.close()
+        return pd.DataFrame()
 
 def get_summary_stats(db_path):
     """Get summary statistics for the database."""
@@ -139,6 +126,22 @@ def get_summary_stats(db_path):
     query = "SELECT AVG(price_per_sqft) as avg_price_per_sqft FROM listings WHERE price_per_sqft IS NOT NULL"
     result = pd.read_sql_query(query, conn)
     stats['avg_price_per_sqft'] = result['avg_price_per_sqft'].iloc[0]
+    
+    # Average scores
+    query = """
+        SELECT 
+            AVG(walk_score) as avg_walk_score,
+            AVG(transit_score) as avg_transit_score,
+            AVG(bike_score) as avg_bike_score
+        FROM listings 
+        WHERE walk_score IS NOT NULL 
+        OR transit_score IS NOT NULL 
+        OR bike_score IS NOT NULL
+    """
+    result = pd.read_sql_query(query, conn)
+    stats['avg_walk_score'] = result['avg_walk_score'].iloc[0]
+    stats['avg_transit_score'] = result['avg_transit_score'].iloc[0]
+    stats['avg_bike_score'] = result['avg_bike_score'].iloc[0]
     
     # City counts
     query = "SELECT city, COUNT(*) as count FROM listings WHERE city IS NOT NULL GROUP BY city ORDER BY count DESC LIMIT 10"
@@ -172,9 +175,9 @@ def get_blacklisted_addresses(db_path):
     conn = get_db_connection(db_path)
     try:
         df = pd.read_sql_query("""
-            SELECT address, reason, added_at, added_by 
+            SELECT address, reason, blacklisted_at 
             FROM address_blacklist 
-            ORDER BY added_at DESC
+            ORDER BY blacklisted_at DESC
         """, conn)
         return df
     except Exception as e:
@@ -196,15 +199,15 @@ def is_address_blacklisted(db_path, address):
     finally:
         conn.close()
 
-def add_to_blacklist(db_path, address, reason=None, added_by='system'):
+def add_to_blacklist(db_path, address, reason=None):
     """Add an address to the blacklist."""
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT OR IGNORE INTO address_blacklist (address, reason, added_by)
-            VALUES (?, ?, ?)
-        """, (address, reason, added_by))
+            INSERT OR IGNORE INTO address_blacklist (address, reason)
+            VALUES (?, ?)
+        """, (address, reason))
         conn.commit()
         return cursor.rowcount > 0
     except Exception as e:

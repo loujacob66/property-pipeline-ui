@@ -54,7 +54,11 @@ def categorize_price(df):
 def enrich_dataframe(df):
     """Add calculated fields to the dataframe"""
     # Ensure numeric columns are float type
-    numeric_columns = ['price', 'sqft', 'beds', 'baths', 'year_built', 'estimated_rent', 'price_per_sqft']
+    numeric_columns = [
+        'price', 'sqft', 'beds', 'baths', 'year_built', 
+        'estimated_rent', 'price_per_sqft', 'walk_score',
+        'transit_score', 'bike_score', 'estimated_monthly_cashflow'
+    ]
     for col in numeric_columns:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -64,6 +68,8 @@ def enrich_dataframe(df):
                 df['estimated_rent'] = pd.Series(dtype='float64')
             elif col == 'price_per_sqft':
                 df['price_per_sqft'] = pd.Series(dtype='float64')
+            elif col == 'estimated_monthly_cashflow':
+                df['estimated_monthly_cashflow'] = pd.Series(dtype='float64')
     
     # Calculate price per square foot
     # Check if necessary columns exist before calculation
@@ -113,6 +119,10 @@ def get_properties_needing_enrichment(df):
     # Properties missing WalkScore data
     walkscore_missing = df[df['walk_score'].isna()]
     
+    # Properties missing transit and bike scores
+    transit_missing = df[df['transit_score'].isna()]
+    bike_missing = df[df['bike_score'].isna()]
+    
     # Properties missing MLS info
     mls_missing = df[df['mls_number'].isna() | df['mls_type'].isna()]
     
@@ -120,16 +130,15 @@ def get_properties_needing_enrichment(df):
     tax_missing = df[df['tax_information'].isna()]
 
     # Properties missing cashflow info
-    # Ensure the column exists, otherwise treat all as missing if it's expected
     if 'estimated_monthly_cashflow' in df.columns:
         cashflow_missing = df[df['estimated_monthly_cashflow'].isna()]
     else:
-        # If the column doesn't exist, consider all properties as needing this enrichment
-        # or handle as per requirements (e.g., create an empty DataFrame for now)
-        cashflow_missing = df.copy() # Or pd.DataFrame(columns=df.columns) if you want it empty
+        cashflow_missing = df.copy()
     
     return {
         'walkscore_missing': walkscore_missing,
+        'transit_missing': transit_missing,
+        'bike_missing': bike_missing,
         'mls_missing': mls_missing,
         'tax_missing': tax_missing,
         'cashflow_missing': cashflow_missing

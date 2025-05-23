@@ -101,6 +101,24 @@ def get_rental_history(listing_id):
         st.error(f"Error fetching rental history: {e}")
         return pd.DataFrame()
 
+def get_listing_changes(listing_id):
+    """Get change history for a specific listing_id."""
+    try:
+        conn = sqlite3.connect(db_path)
+        df_changes = pd.read_sql_query("""
+            SELECT field_name, old_value, new_value, changed_at, source
+            FROM listing_changes
+            WHERE listing_id = ?
+            ORDER BY changed_at DESC
+        """, conn, params=(listing_id,))
+        conn.close()
+        # Ensure changed_at is treated as datetime
+        df_changes['changed_at'] = pd.to_datetime(df_changes['changed_at'])
+        return df_changes
+    except Exception as e:
+        st.error(f"Error fetching listing changes: {e}")
+        return pd.DataFrame()
+
 # --- Filter Section ---
 st.sidebar.header("Filters")
 
@@ -236,8 +254,9 @@ try:
             display_df = df.copy()
             
             # Convert timestamps to local timezone
-            if 'last_updated_at' in display_df.columns:
-                display_df['last_updated_at'] = pd.to_datetime(display_df['last_updated_at']).dt.tz_localize('UTC').dt.tz_convert('America/Los_Angeles')
+            if 'last_updated' in display_df.columns:
+                display_df['last_updated'] = pd.to_datetime(display_df['last_updated'], format='mixed', errors='coerce')
+                display_df['last_updated'] = display_df['last_updated'].dt.tz_localize('UTC').dt.tz_convert('America/Los_Angeles')
             
             if 'price' in display_df.columns:
                 display_df['price'] = display_df['price'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) and isinstance(x, (int, float)) else x)
@@ -253,11 +272,13 @@ try:
 
             # Define the order and selection of columns to display
             columns_to_display_in_order = [
-                'last_updated_at',
+                'last_updated',
+                'db_updated_at',
                 'days_on_compass',
                 'address', 
                 'city',
-                'price', 
+                'price',
+                'status', 
                 'beds', 
                 'baths', 
                 'sqft', 
@@ -268,23 +289,26 @@ try:
                 'estimated_monthly_cashflow',
                 'rent_yield', 
                 'tax_information', 
-                'status',
                 'url'
             ]
-            # Ensure only existing columns are selected, maintaining the defined order
             columns_for_df = [col for col in columns_to_display_in_order if col in display_df.columns]
 
             # Configure column display settings
             column_config = {
-                'last_updated_at': st.column_config.DatetimeColumn(
-                    'Last Updated',
+                'last_updated': st.column_config.DatetimeColumn(
+                    'Last Update',
                     format="MM/DD/YY",
-                    width='small'
+                    width=90
+                ),
+                'db_updated_at': st.column_config.DatetimeColumn(
+                    'DB Update',
+                    format="MM/DD/YY",
+                    width=90
                 ),
                 'days_on_compass': st.column_config.NumberColumn(
                     'Age',
                     format="%d",
-                    width=60
+                    width=40
                 ),
                 'address': st.column_config.TextColumn(
                     'Address',
@@ -359,7 +383,7 @@ try:
             column_config = {k: v for k, v in column_config.items() if k in display_df.columns}
 
             st.dataframe(
-                display_df[columns_for_df].sort_values('last_updated_at', ascending=False), # Sort by last_updated_at
+                display_df[columns_for_df].sort_values('last_updated', ascending=False), # Sort by last_updated
                 column_config=column_config,
                 use_container_width=True,
                 hide_index=True
@@ -802,14 +826,65 @@ try:
             manual_address = st.text_input("Street Address")
             if st.button("Show History for Address"):
                 if manual_address.strip():
-                    st.session_state['manual_history_output'] = show_history(manual_address.strip())
-                    st.session_state['manual_history_address'] = manual_address.strip()
+                    # First get the listing_id for the address
+                    try:
+                        conn = sqlite3.connect(db_path)
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT id FROM listings WHERE address = ?", (manual_address.strip(),))
+                        result = cursor.fetchone()
+                        conn.close()
+                        
+                        if result:
+                            listing_id = result[0]
+                            # Get both listing changes and rental history
+                            changes_df = get_listing_changes(listing_id)
+                            rental_df = get_rental_history(listing_id)
+                            
+                            st.markdown(f"### Listing History for: {manual_address.strip()}")
+                            
+                            # Display listing changes
+                            if not changes_df.empty:
+                                st.subheader("Property Changes")
+                                # Format the changes for display
+                                changes_df['changed_at'] = changes_df['changed_at'].dt.strftime('%Y-%m-%d %H:%M:%S')
+                                st.dataframe(
+                                    changes_df,
+                                    column_config={
+                                        'changed_at': st.column_config.TextColumn('Date'),
+                                        'field_name': st.column_config.TextColumn('Field'),
+                                        'old_value': st.column_config.TextColumn('Old Value'),
+                                        'new_value': st.column_config.TextColumn('New Value'),
+                                        'source': st.column_config.TextColumn('Source')
+                                    },
+                                    use_container_width=True,
+                                    hide_index=True
+                                )
+                            else:
+                                st.info("No property changes found in history.")
+                            
+                            # Display rental history
+                            if not rental_df.empty:
+                                st.subheader("Rental History")
+                                # Format the rental history for display
+                                rental_df['date'] = rental_df['date'].dt.strftime('%Y-%m-%d')
+                                rental_df['rent'] = rental_df['rent'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "")
+                                st.dataframe(
+                                    rental_df,
+                                    column_config={
+                                        'date': st.column_config.TextColumn('Date'),
+                                        'rent': st.column_config.TextColumn('Rent')
+                                    },
+                                    use_container_width=True,
+                                    hide_index=True
+                                )
+                            else:
+                                st.info("No rental history found.")
+                        else:
+                            st.warning(f"No property found with address: {manual_address.strip()}")
+                    except Exception as e:
+                        st.error(f"Error fetching property history: {e}")
                 else:
-                    st.session_state['manual_history_output'] = ''
-                    st.session_state['manual_history_address'] = ''
-            if st.session_state.get('manual_history_output'):
-                st.markdown(f"### Listing History for: {st.session_state['manual_history_address']}")
-                st.code(st.session_state['manual_history_output'])
+                    st.warning("Please enter an address to view history.")
 
         with tab5:
             st.header("Blacklist Management")
