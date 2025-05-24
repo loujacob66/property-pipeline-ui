@@ -5,6 +5,11 @@ from pathlib import Path
 from utils.database import get_db_connection, get_all_listings, get_summary_stats
 from utils.data_processing import enrich_dataframe, format_currency, format_percentage
 
+# Handle refresh after successful operations
+if st.session_state.get('needs_refresh', False):
+    st.session_state.pop('needs_refresh', None)
+    st.rerun()
+
 # Configuration
 st.set_page_config(
     page_title="Dashboard",

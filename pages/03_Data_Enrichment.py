@@ -12,6 +12,8 @@ from utils.script_runner import (
 )
 from utils.database import get_db_connection, get_all_listings
 from utils.data_processing import get_properties_needing_enrichment
+from utils.table_config import get_column_config, get_compass_enrichment_columns
+from utils.table_styles import get_table_styles
 
 st.set_page_config(page_title="Data Enrichment", page_icon="🔄", layout="wide")
 st.title("Data Enrichment")
@@ -173,6 +175,9 @@ elif selected_tab == "Gmail Parser":
                     
                     if result['returncode'] == 0:
                         st.success("Gmail Parser completed successfully")
+                        # Add refresh after successful operation
+                        st.session_state['needs_refresh'] = True
+                        st.rerun()
                     else:
                         st.error("Gmail Parser failed")
                     
@@ -217,70 +222,26 @@ elif selected_tab == "Compass Enrichment":
                 
                 df['selected'] = False  # Add checkbox column
                 
-                # Configure columns for display
-                column_config = {
-                    'selected': st.column_config.CheckboxColumn(
-                        'Select',
-                        help="Select properties to enrich",
-                        default=False,
-                        width='small'
-                    ),
-                    'address': st.column_config.TextColumn(
-                        'Address',
-                        width='medium'
-                    ),
-                    'db_updated_at': st.column_config.DatetimeColumn(
-                        'DB Update',
-                        format="MM/DD/YY",
-                        width=90
-                    ),
-                    'city': st.column_config.TextColumn(
-                        'City',
-                        width='small'
-                    ),
-                    'days_on_compass': st.column_config.NumberColumn(
-                        'Days on Compass',
-                        format="%d",
-                        width='small'
-                    ),
-                    'price': st.column_config.NumberColumn(
-                        'Price',
-                        format="$%d",
-                        width='small'
-                    ),
-                    'beds': st.column_config.NumberColumn(
-                        'Beds',
-                        width='small'
-                    ),
-                    'baths': st.column_config.NumberColumn(
-                        'Baths',
-                        width='small'
-                    ),
-                    'sqft': st.column_config.NumberColumn(
-                        'Sq Ft',
-                        format="%d",
-                        width='small'
-                    ),
-                    'mls_number': st.column_config.TextColumn(
-                        'MLS Number',
-                        width='small'
-                    ),
-                    'mls_type': st.column_config.TextColumn(
-                        'MLS Type',
-                        width='small'
-                    ),
-                    'tax_information': st.column_config.TextColumn(
-                        'Tax Info',
-                        width='small'
-                    )
-                }
+                # Get column configuration and selected columns
+                column_config = get_column_config(interactive=True)
+                # Override the db_updated_at width specifically for this table
+                column_config['db_updated_at'] = st.column_config.DatetimeColumn(
+                    'DB Update',
+                    format="MM/DD/YY",
+                    width=110  # Increased from 90 to 110
+                )
+                selected_columns = get_compass_enrichment_columns()
+                
+                # Apply table styles
+                st.markdown(get_table_styles(), unsafe_allow_html=True)
                 
                 st.subheader("Properties")
                 edited_df = st.data_editor(
-                    df[['selected', 'address', 'db_updated_at', 'city', 'days_on_compass', 'price', 'beds', 'baths', 'sqft', 'mls_number', 'mls_type', 'tax_information']],
+                    df[selected_columns],
                     column_config=column_config,
                     use_container_width=True,
-                    hide_index=True
+                    hide_index=True,
+                    key="compass_enrichment_table"
                 )
                 
                 # Get selected addresses
@@ -345,6 +306,8 @@ elif selected_tab == "Compass Enrichment":
                                 
                                 if result['returncode'] == 0:
                                     st.success(f"Compass Enrichment completed successfully for {address}")
+                                    # Add refresh after successful operation
+                                    st.session_state['needs_refresh'] = True
                                 else:
                                     st.error(f"Compass Enrichment failed for {address}")
                                 
@@ -408,6 +371,9 @@ elif selected_tab == "WalkScore Enrichment":
                 
                 if result['returncode'] == 0:
                     st.success("WalkScore Enrichment completed successfully")
+                    # Add refresh after successful operation
+                    st.session_state['needs_refresh'] = True
+                    st.rerun()
                 else:
                     st.error("WalkScore Enrichment failed")
                 
@@ -476,6 +442,9 @@ elif selected_tab == "Cashflow Enrichment":
                     
                     if result['returncode'] == 0:
                         st.success("Cashflow Enrichment completed successfully")
+                        # Add refresh after successful operation
+                        st.session_state['needs_refresh'] = True
+                        st.rerun()
                     else:
                         st.error("Cashflow Enrichment failed")
                     
@@ -506,4 +475,10 @@ if 'active_tab' in st.session_state:
         
         if tab_to_switch_to:
             st.query_params["tab"] = tab_to_switch_to
+            st.session_state['needs_refresh'] = True
             st.rerun()
+
+# Handle refresh after successful operations
+if st.session_state.get('needs_refresh', False):
+    st.session_state.pop('needs_refresh', None)
+    st.rerun()

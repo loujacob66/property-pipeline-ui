@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
-from utils.database import get_db_connection, get_filtered_listings, get_all_listings
+from utils.database import get_db_connection, get_filtered_listings, get_all_listings, get_blacklisted_addresses
 from utils.data_processing import enrich_dataframe, format_currency, format_percentage
 import io
 import pydeck as pdk
@@ -13,7 +13,15 @@ import sqlite3
 from datetime import datetime
 import sys
 import json
+from utils.table_config import get_column_config, get_property_explorer_columns, get_map_view_columns
+from utils.table_styles import get_table_styles
 
+# Handle refresh after successful operations
+if st.session_state.get('needs_refresh', False):
+    st.session_state.pop('needs_refresh', None)
+    st.rerun()
+
+# Configuration
 st.set_page_config(page_title="Property Explorer", page_icon="🔍", layout="wide")
 st.title("Property Explorer")
 
@@ -28,24 +36,6 @@ show_history_script_path = Path(scripts_path) / "show_listing_history.py"
 # st.write(f"scripts_path: {scripts_path}") # Commented out for cleaner UI
 # show_history_script_path = Path(scripts_path) / "show_listing_history.py"
 # st.write(f"show_history_script_path: {show_history_script_path}  Exists: {show_history_script_path.exists()}") # Commented out
-
-def show_history(address):
-    """Call the show_listing_history.py script with the given address and return its output."""
-    if not show_history_script_path.exists():
-        return f"Script not found: {show_history_script_path}"
-    try:
-        result = subprocess.run(
-            [sys.executable, str(show_history_script_path), address],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        if result.returncode == 0:
-            return result.stdout
-        else:
-            return f"Script error (exit {result.returncode}):\n{result.stderr}\n{result.stdout}"
-    except Exception as e:
-        return f"Error running script: {e}"
 
 def manage_blacklist(address, reason=None, remove=False, dry_run=False):
     """Add or remove an address from the blacklist using the blacklist_address.py script."""
@@ -68,20 +58,23 @@ def manage_blacklist(address, reason=None, remove=False, dry_run=False):
     except Exception as e:
         return f"Error running blacklist script: {e}"
 
-def get_blacklisted_addresses():
-    """Get all blacklisted addresses from the database."""
+def show_history(address):
+    """Call the show_listing_history.py script with the given address and return its output."""
+    if not show_history_script_path.exists():
+        return f"Script not found: {show_history_script_path}"
     try:
-        conn = sqlite3.connect(db_path)
-        df = pd.read_sql_query("""
-            SELECT address, reason, blacklisted_at
-            FROM address_blacklist
-            ORDER BY blacklisted_at DESC
-        """, conn)
-        conn.close()
-        return df
+        result = subprocess.run(
+            [sys.executable, str(show_history_script_path), address],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode == 0:
+            return result.stdout
+        else:
+            return f"Script error (exit {result.returncode}):\n{result.stderr}\n{result.stdout}"
     except Exception as e:
-        st.error(f"Error fetching blacklisted addresses: {e}")
-        return pd.DataFrame()
+        return f"Error running script: {e}"
 
 def get_rental_history(listing_id):
     """Get rental history for a specific listing_id."""
@@ -891,7 +884,7 @@ try:
             
             # Show current blacklist
             st.subheader("Current Blacklist")
-            blacklist_df = get_blacklisted_addresses()
+            blacklist_df = get_blacklisted_addresses(db_path)
             if not blacklist_df.empty:
                 st.dataframe(blacklist_df, use_container_width=True)
             else:
@@ -911,6 +904,7 @@ try:
                     result = manage_blacklist(new_address, blacklist_reason, dry_run=dry_run)
                     st.code(result)
                     # Refresh the blacklist display
+                    st.session_state['needs_refresh'] = True
                     st.rerun()
                 else:
                     st.warning("Please enter an address to blacklist.")
@@ -926,6 +920,7 @@ try:
                     result = manage_blacklist(address_to_remove, remove=True)
                     st.code(result)
                     # Refresh the blacklist display
+                    st.session_state['needs_refresh'] = True
                     st.rerun()
             else:
                 st.info("No addresses available to remove from blacklist.")
