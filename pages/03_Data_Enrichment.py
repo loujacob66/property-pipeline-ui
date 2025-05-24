@@ -10,9 +10,9 @@ from utils.script_runner import (
     run_cashflow_enrichment,
     get_script_progress
 )
-from utils.database import get_db_connection, get_all_listings
+from utils.database import get_db_connection, get_all_listings, get_blacklisted_addresses
 from utils.data_processing import get_properties_needing_enrichment
-from utils.table_config import get_column_config, get_compass_enrichment_columns
+from utils.table_config import get_column_config, get_compass_enrichment_columns, get_walkscore_enrichment_columns
 from utils.table_styles import get_table_styles
 
 st.set_page_config(page_title="Data Enrichment", page_icon="🔄", layout="wide")
@@ -29,21 +29,17 @@ tab_names = [
     "Gmail Parser", 
     "Compass Enrichment", 
     "WalkScore Enrichment",
-    "Cashflow Enrichment"
+    "Cashflow Enrichment",
+    "Blacklist Management"
 ]
 current_tab_name = st.query_params.get("tab", tab_names[0])
 if current_tab_name not in tab_names:
     current_tab_name = tab_names[0]
 
-selected_tab = st.radio(
-    "Select View",
-    options=tab_names,
-    index=tab_names.index(current_tab_name),
-    horizontal=True,
-    label_visibility="collapsed" 
-)
+# Create tabs instead of radio buttons
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(tab_names)
 
-if selected_tab == "Enrichment Dashboard":
+with tab1:
     st.header("Enrichment Dashboard")
     
     try:
@@ -130,7 +126,7 @@ if selected_tab == "Enrichment Dashboard":
         st.error(f"Error connecting to database or processing data: {e}")
         st.info(f"Make sure the database exists at: {db_path} and the schema is as expected.")
 
-elif selected_tab == "Gmail Parser":
+with tab2:
     st.header("Gmail Parser")
     st.write("Parse property listings from Gmail emails. This will extract property data from emails and save it to your database.")
     
@@ -188,7 +184,7 @@ elif selected_tab == "Gmail Parser":
                             st.error("Errors")
                             st.text_area("Error Output", result['stderr'], height=150)
 
-elif selected_tab == "Compass Enrichment":
+with tab3:
     st.header("Compass Enrichment")
     st.write("Enrich property listings with data from Compass. This will add MLS numbers, tax information, and other details.")
     
@@ -319,24 +315,25 @@ elif selected_tab == "Compass Enrichment":
                                     error_output = "\n".join([line for line in stdout_lines if " - ERROR -" in line])
 
                                     if info_warning_output:
-                                        st.text_area("Output", info_warning_output, height=300)
+                                        st.text_area("Output", info_warning_output, height=300, key=f"output_{address}")
 
                                     if result['stderr'] or error_output:
                                         st.error("Errors")
                                         # Combine stderr and parsed error messages from stdout
                                         combined_error_output = (result['stderr'] + "\n" + error_output).strip()
-                                        st.text_area("Error Output", combined_error_output, height=150)
+                                        st.text_area("Error Output", combined_error_output, height=150, key=f"error_{address}")
                             except Exception as e:
                                 st.error(f"Error processing {address}: {str(e)}")
                         
-                        # Refresh the page to show updated data
-                        st.rerun()
+                        # Add a refresh button instead of automatic refresh
+                        if st.button("Refresh Page to Show Updated Data"):
+                            st.rerun()
                 
         except Exception as e:
             st.error(f"Error loading properties: {e}")
             st.info("Please check your database connection and try again.")
 
-elif selected_tab == "WalkScore Enrichment":
+with tab4:
     st.header("WalkScore Enrichment")
     st.write("Enrich property listings with WalkScore data. This will add Walk Score, Transit Score, and Bike Score information.")
     
@@ -352,48 +349,142 @@ elif selected_tab == "WalkScore Enrichment":
             st.warning(f"WalkScore API configuration file not found: {walkscore_config_path}")
             st.info("Running the script will create a template config file that you'll need to fill in.")
         
-        if st.button("Run WalkScore Enrichment"):
-            with st.spinner("Running WalkScore Enrichment..."):
-                # Create a progress bar
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+        # Get all properties
+        try:
+            conn = get_db_connection(db_path)
+            df = get_all_listings(db_path)
+            
+            if df.empty:
+                st.warning("No properties found in the database.")
+            else:
+                # Sort by db_updated_at in descending order (most recent first)
+                if 'db_updated_at' in df.columns:
+                    df['db_updated_at'] = pd.to_datetime(df['db_updated_at'], errors='coerce')
+                    df = df.sort_values('db_updated_at', ascending=False)
                 
-                # Run the script
-                result = run_walkscore_enrichment(walkscore_script_path)
+                df['selected'] = False  # Add checkbox column
                 
-                # Update progress based on output
-                if result['stdout']:
-                    progress_info = get_script_progress(result['stdout'])
-                    if progress_info and progress_info['total'] > 0:
-                        progress = min(progress_info['processed'] / progress_info['total'], 1.0)
-                        progress_bar.progress(progress)
-                        status_text.text(progress_info['last_message'])
+                # Get column configuration and selected columns
+                column_config = get_column_config(interactive=True)
+                selected_columns = get_walkscore_enrichment_columns()
                 
-                if result['returncode'] == 0:
-                    st.success("WalkScore Enrichment completed successfully")
-                    # Add refresh after successful operation
-                    st.session_state['needs_refresh'] = True
-                    st.rerun()
-                else:
-                    st.error("WalkScore Enrichment failed")
+                # Apply table styles
+                st.markdown(get_table_styles(), unsafe_allow_html=True)
                 
-                # Display output in expandable sections
-                with st.expander("Script Output", expanded=result['returncode'] != 0):
-                    # Separate stdout into info/warning and error messages
-                    stdout_lines = result['stdout'].splitlines()
-                    info_warning_output = "\n".join([line for line in stdout_lines if " - INFO -" in line or " - WARNING -" in line])
-                    error_output = "\n".join([line for line in stdout_lines if " - ERROR -" in line])
+                st.subheader("Properties")
+                edited_df = st.data_editor(
+                    df[selected_columns],
+                    column_config=column_config,
+                    use_container_width=True,
+                    hide_index=True,
+                    key="walkscore_enrichment_table"
+                )
+                
+                # Get selected addresses
+                selected_addresses = edited_df[edited_df['selected']]['address'].tolist()
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    limit = st.number_input("Limit (Used only when no addresses are selected)", min_value=1, value=10, key="walkscore_limit")
+                    dry_run = st.checkbox("Dry Run (Preview without DB insertion)", key="walkscore_dry_run")
+                
+                with col2:
+                    pass
+                
+                if st.button("Run WalkScore Enrichment"):
+                    with st.spinner("Running WalkScore Enrichment..."):
+                        # Create a progress bar
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        # Determine what to process
+                        if selected_addresses:
+                            # Process selected addresses
+                            addresses_to_process = selected_addresses
+                            status_text.text(f"Processing {len(addresses_to_process)} selected addresses...")
+                        else:
+                            # Get properties that need enrichment
+                            enrichment_needed = get_properties_needing_enrichment(df)
+                            properties_needing_enrichment = pd.concat([
+                                enrichment_needed['walkscore_missing'],
+                                enrichment_needed['transit_missing'],
+                                enrichment_needed['bike_missing']
+                            ]).drop_duplicates(subset=['address'])
+                            
+                            # Take the first N properties that need enrichment
+                            addresses_to_process = properties_needing_enrichment['address'].head(limit).tolist()
+                            status_text.text(f"Processing {len(addresses_to_process)} properties that need enrichment...")
+                        
+                        # Run the script for each address
+                        for i, address in enumerate(addresses_to_process):
+                            try:
+                                # Update progress
+                                progress = (i + 1) / len(addresses_to_process)
+                                progress_bar.progress(progress)
+                                status_text.text(f"Processing {i + 1} of {len(addresses_to_process)}: {address}")
+                                
+                                # Run the script with the address parameter
+                                result = run_walkscore_enrichment(
+                                    script_path=walkscore_script_path,
+                                    address=address,
+                                    limit=limit if not selected_addresses else None,
+                                    dry_run=dry_run
+                                )
+                                
+                                # Display output in expandable sections
+                                with st.expander(f"Results for {address}", expanded=result['returncode'] != 0):
+                                    # Separate stdout into info/warning and error messages
+                                    stdout_lines = result['stdout'].splitlines()
+                                    info_warning_output = "\n".join([line for line in stdout_lines if " - INFO -" in line or " - WARNING -" in line])
+                                    error_output = "\n".join([line for line in stdout_lines if " - ERROR -" in line])
 
-                    if info_warning_output:
-                        st.text_area("Output", info_warning_output, height=300)
+                                    if info_warning_output:
+                                        st.text_area("Script Output", info_warning_output, height=300, key=f"output_{address}")
 
-                    if result['stderr'] or error_output:
-                        st.error("Errors")
-                        # Combine stderr and parsed error messages from stdout
-                        combined_error_output = (result['stderr'] + "\n" + error_output).strip()
-                        st.text_area("Error Output", combined_error_output, height=150)
+                                    if result['stderr'] or error_output:
+                                        st.error("Script encountered issues")
+                                        # Combine stderr and parsed error messages from stdout
+                                        combined_error_output = (result['stderr'] + "\n" + error_output).strip()
+                                        st.text_area("Details", combined_error_output, height=150, key=f"error_{address}")
+                                
+                                if result['returncode'] == 0:
+                                    st.success(f"WalkScore Enrichment completed successfully for {address}")
+                                else:
+                                    st.error(f"WalkScore Enrichment failed for {address}")
+                                
+                            except Exception as e:
+                                st.error(f"Error processing {address}: {str(e)}")
+                        
+                        # Add a refresh button
+                        if st.button("Refresh Page to Show Updated Data"):
+                            st.session_state['needs_refresh'] = True
+                            st.rerun()
+        except Exception as e:
+            st.error(f"Error loading properties: {e}")
+            st.info("Please check your database connection and try again.")
 
-elif selected_tab == "Cashflow Enrichment":
+# Display any stored results at the top of the page
+if 'walkscore_results' in st.session_state:
+    st.subheader("Recent WalkScore Enrichment Results")
+    for result_data in st.session_state['walkscore_results']:
+        # Only show results from the last 5 minutes
+        if time.time() - result_data['timestamp'] < 300:  # 5 minutes
+            with st.expander(f"Results for {result_data['address']}", expanded=True):
+                result = result_data['result']
+                stdout_lines = result['stdout'].splitlines()
+                info_warning_output = "\n".join([line for line in stdout_lines if " - INFO -" in line or " - WARNING -" in line])
+                error_output = "\n".join([line for line in stdout_lines if " - ERROR -" in line])
+
+                if info_warning_output:
+                    st.text_area("Output", info_warning_output, height=300, key=f"stored_output_{result_data['address']}")
+
+                if result['stderr'] or error_output:
+                    st.error("Errors")
+                    combined_error_output = (result['stderr'] + "\n" + error_output).strip()
+                    st.text_area("Error Output", combined_error_output, height=150, key=f"stored_error_{result_data['address']}")
+
+with tab5:
     st.header("Cashflow Enrichment")
     st.write("Enrich property listings with estimated monthly cashflow based on financial parameters.")
 
@@ -460,6 +551,97 @@ elif selected_tab == "Cashflow Enrichment":
                             st.error("Errors")
                             combined_error_output = (result['stderr'] + "\n" + error_output_stdout).strip()
                             st.text_area("Error Output", combined_error_output, height=150)
+
+with tab6:
+    st.header("Blacklist Management")
+    
+    # Show current blacklist
+    st.subheader("Current Blacklist")
+    blacklist_df = get_blacklisted_addresses(db_path)
+    if not blacklist_df.empty:
+        st.dataframe(blacklist_df, use_container_width=True)
+    else:
+        st.info("No addresses are currently blacklisted.")
+    
+    # Add new address to blacklist
+    st.subheader("Add to Blacklist")
+    col1, col2 = st.columns(2)
+    with col1:
+        new_address = st.text_input("Address to blacklist")
+    with col2:
+        blacklist_reason = st.text_input("Reason for blacklisting")
+    dry_run = st.checkbox("Dry Run (do not actually modify the database)")
+    
+    if st.button("Add to Blacklist"):
+        if new_address:
+            result = manage_blacklist(new_address, blacklist_reason, dry_run=dry_run)
+            st.code(result)
+            # Refresh the blacklist display
+            st.session_state['needs_refresh'] = True
+            st.rerun()
+        else:
+            st.warning("Please enter an address to blacklist.")
+    
+    # Remove from blacklist
+    st.subheader("Remove from Blacklist")
+    if not blacklist_df.empty:
+        address_to_remove = st.selectbox(
+            "Select address to remove from blacklist",
+            blacklist_df['address'].tolist()
+        )
+        if st.button("Remove from Blacklist"):
+            result = manage_blacklist(address_to_remove, remove=True)
+            st.code(result)
+            # Refresh the blacklist display
+            st.session_state['needs_refresh'] = True
+            st.rerun()
+    else:
+        st.info("No addresses available to remove from blacklist.")
+
+    # --- Run Blacklist Expired Script ---
+    st.subheader("Clean Up Expired Blacklist Entries")
+    st.write("Run the script to automatically remove expired addresses from the blacklist based on criteria defined in the script.")
+
+    # Initialize session state for script output
+    if 'blacklist_expired_output' not in st.session_state:
+        st.session_state['blacklist_expired_output'] = ""
+
+    # Add Dry Run checkbox
+    run_expired_dry_run = st.checkbox("Dry Run (do not actually modify the database)", key="run_expired_dry_run_checkbox")
+
+    if st.button("Run Blacklist Expired Script", key="run_blacklist_expired_script_button"):
+         # Define the path to the blacklist_expired_address.py script
+        blacklist_expired_script_path = Path(scripts_path) / "blacklist_address_expired.py"
+
+        if not blacklist_expired_script_path.exists():
+            st.session_state['blacklist_expired_output'] = f"Error: Blacklist expired script not found at {blacklist_expired_script_path}"
+        else:
+            try:
+                # Execute the script
+                cmd = [sys.executable, str(blacklist_expired_script_path)]
+                if run_expired_dry_run:
+                    cmd.append("--dry-run")
+
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=60 # Give it a bit more time
+                )
+                if result.returncode == 0:
+                    st.session_state['blacklist_expired_output'] = result.stdout
+                    st.success("Blacklist expired script executed successfully.")
+                else:
+                    st.session_state['blacklist_expired_output'] = f"Script error (exit {result.returncode}):\n{result.stderr}\n{result.stdout}"
+                    st.error("Error executing blacklist expired script.")
+            except Exception as e:
+                st.session_state['blacklist_expired_output'] = f"Error running script: {e}"
+                st.error(f"Error running script: {e}")
+
+    # Display script output if available
+    if st.session_state['blacklist_expired_output']:
+         st.markdown("#### Script Output:")
+         st.code(st.session_state['blacklist_expired_output'])
 
 # Handle tab switching from dashboard buttons
 if 'active_tab' in st.session_state:

@@ -127,17 +127,28 @@ def get_compass_enrichment_columns():
     """Columns to display in Compass Enrichment tab"""
     return [
         'selected',
-        'address',
         'db_updated_at',
-        'city',
         'days_on_compass',
+        'status',
+        'address',
+        'city',
         'price',
-        'beds',
-        'baths',
-        'sqft',
-        'mls_number',
-        'mls_type',
-        'tax_information'
+        'url'
+    ]
+
+def get_walkscore_enrichment_columns():
+    """Columns to display in WalkScore Enrichment tab"""
+    return [
+        'selected',
+        'db_updated_at',
+        'days_on_compass',
+        'status',
+        'address',
+        'city',
+        'walk_score',
+        'transit_score',
+        'bike_score',
+        'url'
     ]
 
 def get_property_explorer_columns():

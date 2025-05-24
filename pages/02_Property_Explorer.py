@@ -192,9 +192,9 @@ try:
         st.warning("No properties found matching your criteria.")
     else:
         # Add tabs for different views
-        tab1, tab2, tab3, tab_rental_histories, tab_lookup, tab4, tab5, tab_cashflow = st.tabs([
+        tab1, tab2, tab3, tab_rental_histories, tab_lookup, tab4, tab_cashflow = st.tabs([
             "Table View", "Map View", "Visual Analysis", "Rental Histories", 
-            "Quick Lookup", "Property History", "Blacklist Management", "Cashflow & Appreciation"
+            "Quick Lookup", "Property History", "Cashflow & Appreciation"
         ])
         
         # Add custom CSS for compact, scrollable table
@@ -878,97 +878,6 @@ try:
                         st.error(f"Error fetching property history: {e}")
                 else:
                     st.warning("Please enter an address to view history.")
-
-        with tab5:
-            st.header("Blacklist Management")
-            
-            # Show current blacklist
-            st.subheader("Current Blacklist")
-            blacklist_df = get_blacklisted_addresses(db_path)
-            if not blacklist_df.empty:
-                st.dataframe(blacklist_df, use_container_width=True)
-            else:
-                st.info("No addresses are currently blacklisted.")
-            
-            # Add new address to blacklist
-            st.subheader("Add to Blacklist")
-            col1, col2 = st.columns(2)
-            with col1:
-                new_address = st.text_input("Address to blacklist")
-            with col2:
-                blacklist_reason = st.text_input("Reason for blacklisting")
-            dry_run = st.checkbox("Dry Run (do not actually modify the database)")
-            
-            if st.button("Add to Blacklist"):
-                if new_address:
-                    result = manage_blacklist(new_address, blacklist_reason, dry_run=dry_run)
-                    st.code(result)
-                    # Refresh the blacklist display
-                    st.session_state['needs_refresh'] = True
-                    st.rerun()
-                else:
-                    st.warning("Please enter an address to blacklist.")
-            
-            # Remove from blacklist
-            st.subheader("Remove from Blacklist")
-            if not blacklist_df.empty:
-                address_to_remove = st.selectbox(
-                    "Select address to remove from blacklist",
-                    blacklist_df['address'].tolist()
-                )
-                if st.button("Remove from Blacklist"):
-                    result = manage_blacklist(address_to_remove, remove=True)
-                    st.code(result)
-                    # Refresh the blacklist display
-                    st.session_state['needs_refresh'] = True
-                    st.rerun()
-            else:
-                st.info("No addresses available to remove from blacklist.")
-
-            # --- Run Blacklist Expired Script ---
-            st.subheader("Clean Up Expired Blacklist Entries")
-            st.write("Run the script to automatically remove expired addresses from the blacklist based on criteria defined in the script.")
-
-            # Initialize session state for script output
-            if 'blacklist_expired_output' not in st.session_state:
-                st.session_state['blacklist_expired_output'] = ""
-
-            # Add Dry Run checkbox
-            run_expired_dry_run = st.checkbox("Dry Run (do not actually modify the database)", key="run_expired_dry_run_checkbox")
-
-            if st.button("Run Blacklist Expired Script", key="run_blacklist_expired_script_button"):
-                 # Define the path to the blacklist_expired_address.py script
-                blacklist_expired_script_path = Path(scripts_path) / "blacklist_address_expired.py"
-
-                if not blacklist_expired_script_path.exists():
-                    st.session_state['blacklist_expired_output'] = f"Error: Blacklist expired script not found at {blacklist_expired_script_path}"
-                else:
-                    try:
-                        # Execute the script
-                        cmd = [sys.executable, str(blacklist_expired_script_path)]
-                        if run_expired_dry_run:
-                            cmd.append("--dry-run")
-
-                        result = subprocess.run(
-                            cmd,
-                            capture_output=True,
-                            text=True,
-                            timeout=60 # Give it a bit more time
-                        )
-                        if result.returncode == 0:
-                            st.session_state['blacklist_expired_output'] = result.stdout
-                            st.success("Blacklist expired script executed successfully.")
-                        else:
-                            st.session_state['blacklist_expired_output'] = f"Script error (exit {result.returncode}):\n{result.stderr}\n{result.stdout}"
-                            st.error("Error executing blacklist expired script.")
-                    except Exception as e:
-                        st.session_state['blacklist_expired_output'] = f"Error running script: {e}"
-                        st.error(f"Error running script: {e}")
-
-            # Display script output if available
-            if st.session_state['blacklist_expired_output']:
-                 st.markdown("#### Script Output:")
-                 st.code(st.session_state['blacklist_expired_output'])
 
         with tab_cashflow:
             st.header("Cashflow & Appreciation Analysis")

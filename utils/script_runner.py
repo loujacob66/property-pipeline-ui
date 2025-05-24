@@ -52,9 +52,16 @@ def run_compass_enrichment(script_path, output=None, limit=None, headless=False,
     
     return run_script(script_path, args)
 
-def run_walkscore_enrichment(script_path):
+def run_walkscore_enrichment(script_path, address=None, limit=None, dry_run=False):
     """Run the WalkScore enrichment script."""
-    return run_script(script_path)
+    args = []
+    if address:
+        args.extend(["--address", address])
+    if limit:
+        args.extend(["--limit", str(limit)])
+    if dry_run:
+        args.append("--dry-run")
+    return run_script(script_path, args)
 
 def run_cashflow_enrichment(script_path, config_path=None, db_path=None, limit=None, dry_run=False, force_update=False, address=None):
     """Run the Cashflow enrichment script."""
