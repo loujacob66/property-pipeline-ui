@@ -530,7 +530,7 @@ try:
                     'walk_score', 'transit_score', 'bike_score', 'walk_score_category'
                 ],
                 "Status Info": [
-                    'status', 'days_on_compass', 'last_updated', 'favorite', 'imported_at'
+                    'status', 'days_on_compass', 'last_updated', 'imported_at'
                 ]
             }
             

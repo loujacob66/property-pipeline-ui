@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
-from utils.database import get_db_connection, get_filtered_listings, get_all_listings, get_blacklisted_addresses
+from utils.database import get_db_connection, get_filtered_listings, get_all_listings, get_blacklisted_addresses, toggle_favorite, get_favorites
 from utils.data_processing import enrich_dataframe, format_currency, format_percentage
 import io
 import pydeck as pdk
@@ -28,6 +28,10 @@ st.title("Property Explorer")
 # Get paths from session state
 db_path = st.session_state.get('db_path', "")
 scripts_path = st.session_state.get('default_scripts_path', "../property-pipeline/scripts")
+
+# Debug output for paths
+# st.write(f"[DEBUG] Database path: {db_path}")
+# st.write(f"[DEBUG] Database exists: {Path(db_path).exists() if db_path else False}")
 
 # Define the path to the show_listing_history.py script for property history
 show_history_script_path = Path(scripts_path) / "show_listing_history.py"
@@ -123,19 +127,26 @@ try:
          available_cities = []
          initial_df = pd.DataFrame() # Ensure initial_df exists but is empty
     else:
+        # st.write("[DEBUG] Loading data from database...")
         initial_df = get_all_listings(db_path)
+        # st.write(f"[DEBUG] Loaded {len(initial_df)} properties")
         if initial_df.empty:
             st.sidebar.warning("No data available for filtering.")
             available_cities = []
         else:
+            # st.write("[DEBUG] Enriching data...")
             initial_df = enrich_dataframe(initial_df) # Enrich once here
+            # st.write(f"[DEBUG] Data enriched. Columns: {initial_df.columns.tolist()}")
             if 'city' in initial_df.columns and not initial_df['city'].isna().all():
                 cities = initial_df['city'].unique()
                 available_cities = sorted([str(city) for city in cities if pd.notna(city) and str(city).strip()])
+                # st.write(f"[DEBUG] Found {len(available_cities)} cities")
             else:
                 available_cities = []
+                # st.write("[DEBUG] No cities found in data")
 except Exception as e:
     st.sidebar.error(f"Error loading filter data: {e}")
+    # st.write(f"[DEBUG] Error details: {str(e)}")
     available_cities = []
     initial_df = pd.DataFrame() # Ensure initial_df exists but is empty
 
@@ -161,7 +172,7 @@ try:
     # Initialize DataFrame - Use the initially loaded df
     if 'initial_df' in locals() and not initial_df.empty:
         df = initial_df.copy() # Start with the full dataset loaded for filters
-        st.write(f"Showing {len(df)} properties initially. Apply filters to refine results.")
+        st.write(f"Showing {len(df)} properties initially. Apply filters to refine results. Select items to add to favorites tab.")
     else:
          # If initial_df is empty (due to error or no data), df should also be empty
          df = pd.DataFrame()
@@ -192,9 +203,9 @@ try:
         st.warning("No properties found matching your criteria.")
     else:
         # Add tabs for different views
-        tab1, tab2, tab3, tab_rental_histories, tab_lookup, tab4, tab_cashflow = st.tabs([
+        tab1, tab2, tab3, tab_rental_histories, tab_lookup, tab4, tab_cashflow, tab_favorites = st.tabs([
             "Table View", "Map View", "Visual Analysis", "Rental Histories", 
-            "Quick Lookup", "Property History", "Cashflow & Appreciation"
+            "Quick Lookup", "Property History", "Cashflow & Appreciation", "Favorites"
         ])
         
         # Add custom CSS for compact, scrollable table
@@ -209,47 +220,22 @@ try:
         """, unsafe_allow_html=True)
 
         with tab1:
-            st.header("Quick Stats")
-            # TODO: Add logic here to fetch "Quick Stats" data.
-            # This data should include property counts by label for the last 3, 7, 14, and 30 days,
-            # as well as the total count for each label.
-            # You will likely need to add a new function to utils/database.py for this.
-
-            # TODO: Display the "Quick Stats" data here, likely in a table or similar format.
-            # Example placeholder:
-            # st.write("Quick Stats Table Placeholder")
-            # st.dataframe(quick_stats_df) # Assuming you fetch the data into quick_stats_df
-
-            st.header("Recent Listings")
-            # TODO: Add logic here to fetch the 10 most recently listed or updated properties.
-            # You will likely need to add a new function to utils/database.py for this.
-            # Ensure the fetched data includes columns necessary for the display table below.
-
-            # TODO: Display the "Recent Listings" data here.
-            # Use the existing column_config and columns_to_display_in_order for consistent formatting.
-            # Example placeholder:
-            # recent_listings_df = fetch_recent_listings(db_path) # Assuming you have this function
-            # if not recent_listings_df.empty:
-            #     # Apply formatting similar to the main table if needed (e.g., currency, percentage)
-            #     # Filter and order columns as done for the main table
-            #     recent_listings_display_df = recent_listings_df[columns_for_df].copy()
-            #     # Apply column configuration for formatting
-            #     st.dataframe(
-            #         recent_listings_display_df,
-            #         column_config=column_config, # Reuse the config from the main table
-            #         use_container_width=True,
-            #         hide_index=True
-            #     )
-            # else:
-            #     st.info("No recent listings found.")
-
-            st.write("Main Property Table:")
+        
             display_df = df.copy()
+            
+            # Add favorite column - keep as int64 (1/0) for database compatibility
+            display_df['favorite'] = display_df['favorite'].fillna(0).astype('int64')
             
             # Convert timestamps to local timezone
             if 'last_updated' in display_df.columns:
                 display_df['last_updated'] = pd.to_datetime(display_df['last_updated'], format='mixed', errors='coerce')
                 display_df['last_updated'] = display_df['last_updated'].dt.tz_localize('UTC').dt.tz_convert('America/Los_Angeles')
+            if 'db_updated_at' in display_df.columns:
+                display_df['db_updated_at'] = pd.to_datetime(display_df['db_updated_at'], errors='coerce')
+            if 'imported_at' in display_df.columns:
+                display_df['imported_at'] = pd.to_datetime(display_df['imported_at'], errors='coerce')
+            if 'created_at' in display_df.columns:
+                display_df['created_at'] = pd.to_datetime(display_df['created_at'], errors='coerce')
             
             if 'price' in display_df.columns:
                 display_df['price'] = display_df['price'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) and isinstance(x, (int, float)) else x)
@@ -265,6 +251,8 @@ try:
 
             # Define the order and selection of columns to display
             columns_to_display_in_order = [
+                'id',  # Always include id (hidden)
+                'favorite',  # Add favorite column first
                 'last_updated',
                 'db_updated_at',
                 'days_on_compass',
@@ -275,7 +263,6 @@ try:
                 'beds', 
                 'baths', 
                 'sqft', 
-                'price_per_sqft',
                 'mls_type', 
                 'walk_score', 
                 'estimated_rent', 
@@ -286,8 +273,15 @@ try:
             ]
             columns_for_df = [col for col in columns_to_display_in_order if col in display_df.columns]
 
-            # Configure column display settings
+            # Configure column display settings (do NOT include 'id')
             column_config = {
+                'favorite': st.column_config.CheckboxColumn(
+                    'Favorite',
+                    help="Add to favorites",
+                    width=40,
+                    default=False,
+                    required=True
+                ),
                 'last_updated': st.column_config.DatetimeColumn(
                     'Last Update',
                     format="MM/DD/YY",
@@ -329,11 +323,6 @@ try:
                     format="%d",
                     width=60
                 ),
-                'price_per_sqft': st.column_config.NumberColumn(
-                    '$/SQFT',
-                    format="$%d",
-                    width=60
-                ),
                 'mls_type': st.column_config.TextColumn(
                     'MLS Type',
                     width='small'
@@ -365,7 +354,6 @@ try:
                     'Status',
                     width='small'
                 ),
-              
                 'url': st.column_config.LinkColumn(
                     'Compass',
                     width='medium'
@@ -375,12 +363,62 @@ try:
             # Filter column config to only include columns that exist in the dataframe
             column_config = {k: v for k, v in column_config.items() if k in display_df.columns}
 
-            st.dataframe(
-                display_df[columns_for_df].sort_values('last_updated', ascending=False), # Sort by last_updated
+            # Display the dataframe with editing enabled
+            edited_df = st.data_editor(
+                display_df[columns_for_df],
                 column_config=column_config,
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                key="property_table"
             )
+
+            # Handle favorite changes
+            if 'property_table' in st.session_state:
+                # Get the current state of favorites
+                current_favorites = edited_df['favorite'].to_dict()
+                previous_favorites = display_df['favorite'].to_dict()
+                
+                # Only process changes if there are any
+                if current_favorites != previous_favorites:
+                    for idx, row in edited_df.iterrows():
+                        if row['favorite'] != display_df.iloc[idx]['favorite']:
+                            listing_id_from_df = display_df.iloc[idx]['id']
+                            listing_id_for_db = int(listing_id_from_df)  # Explicit cast to Python int
+                            
+                            try:
+                                # Store the current state before attempting to change
+                                current_state = bool(row['favorite'])
+                                
+                                # Attempt to update the database
+                                success = toggle_favorite(db_path, listing_id_for_db, current_state)
+                                
+                                if success:
+                                    # Update was successful, force a refresh
+                                    st.session_state['needs_refresh'] = True
+                                    # Clear the property_table state to force a fresh load
+                                    if 'property_table' in st.session_state:
+                                        del st.session_state['property_table']
+                                    st.rerun()
+                                else:
+                                    # Update failed, reset the UI state
+                                    edited_df.at[idx, 'favorite'] = display_df.iloc[idx]['favorite']
+                                    st.error(f"Failed to update favorite status for {display_df.iloc[idx]['address']}")
+                                    # Force a refresh to ensure UI is in sync
+                                    st.session_state['needs_refresh'] = True
+                                    st.rerun()
+                            except Exception as e:
+                                # Handle any unexpected errors
+                                st.error(f"Error updating favorite: {str(e)}")
+                                # Reset the favorite state to match the database
+                                edited_df.at[idx, 'favorite'] = display_df.iloc[idx]['favorite']
+                                # Force a refresh to ensure UI is in sync
+                                st.session_state['needs_refresh'] = True
+                                st.rerun()
+
+            # Add a refresh button
+            if st.button("Refresh Page to Show Updated Data"):
+                st.session_state['needs_refresh'] = True
+                st.rerun()
 
             # Dropdown to select an address
             selected_address = st.selectbox(
@@ -1073,6 +1111,122 @@ try:
                             st.error(f"Error running analysis: {result.stderr}")
                     except Exception as e:
                         st.error(f"Error running analysis: {str(e)}")
+
+        with tab_favorites:
+            st.header("Favorite Properties")
+            
+            try:
+                # Get favorite properties using the same pattern as Data Enrichment
+                conn = get_db_connection(db_path)
+                favorites_df = get_favorites(db_path)
+                
+                # Debug: Show raw favorites DataFrame
+                # st.subheader("[Debug] Raw favorites DataFrame")
+                # st.write(favorites_df)
+                
+                if favorites_df.empty:
+                    st.info("No favorite properties yet. Use the checkboxes in the Table View to add properties to your favorites.")
+                else:
+                    # Format the display
+                    display_favorites = favorites_df.copy()
+                    
+                    # Convert timestamps
+                    if 'last_updated' in display_favorites.columns:
+                        display_favorites['last_updated'] = pd.to_datetime(display_favorites['last_updated'], format='mixed', errors='coerce')
+                        display_favorites['last_updated'] = display_favorites['last_updated'].dt.tz_localize('UTC').dt.tz_convert('America/Los_Angeles')
+                    if 'db_updated_at' in display_favorites.columns:
+                        display_favorites['db_updated_at'] = pd.to_datetime(display_favorites['db_updated_at'], errors='coerce')
+                    if 'imported_at' in display_favorites.columns:
+                        display_favorites['imported_at'] = pd.to_datetime(display_favorites['imported_at'], errors='coerce')
+                    if 'created_at' in display_favorites.columns:
+                        display_favorites['created_at'] = pd.to_datetime(display_favorites['created_at'], errors='coerce')
+                    
+                    # Format currency columns
+                    if 'price' in display_favorites.columns:
+                        display_favorites['price'] = display_favorites['price'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) and isinstance(x, (int, float)) else x)
+                    if 'estimated_rent' in display_favorites.columns:
+                        display_favorites['estimated_rent'] = display_favorites['estimated_rent'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) and isinstance(x, (int, float)) else x)
+                    if 'estimated_monthly_cashflow' in display_favorites.columns:
+                        display_favorites['estimated_monthly_cashflow'] = display_favorites['estimated_monthly_cashflow'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) and isinstance(x, (int, float)) else x)
+                    if 'rent_yield' in display_favorites.columns:
+                        # Convert to percentage value (e.g., 0.075 -> 7.5) for NumberColumn formatting
+                        display_favorites['rent_yield'] = display_favorites['rent_yield'].apply(lambda x: x * 100 if pd.notna(x) and isinstance(x, (int, float)) else x)
+                    
+                    # Select columns to display
+                    columns_to_display = [
+                        'last_updated',
+                        'address',
+                        'city',
+                        'price',
+                        'status',
+                        'beds',
+                        'baths',
+                        'rent_yield',
+                        'url'
+                    ]
+                    columns_to_display = [col for col in columns_to_display if col in display_favorites.columns]
+                    
+                    # Configure column display
+                    column_config = {
+                        'last_updated': st.column_config.DatetimeColumn(
+                            'Last Update',
+                            format="MM/DD/YY",
+                            width=90
+                        ),
+                        'address': st.column_config.TextColumn(
+                            'Address',
+                            width=175
+                        ),
+                        'city': st.column_config.TextColumn(
+                            'City',
+                            width=110
+                        ),
+                        'price': st.column_config.TextColumn(
+                            'Price',
+                            width=100
+                        ),
+                        'status': st.column_config.TextColumn(
+                            'Status',
+                            width=80
+                        ),
+                        'beds': st.column_config.NumberColumn(
+                            'Beds',
+                            width=40
+                        ),
+                        'baths': st.column_config.NumberColumn(
+                            'Baths',
+                            width=50
+                        ),
+                        'rent_yield': st.column_config.NumberColumn(
+                            'Rent Yield',
+                            format="%.1f%%",
+                            width=80
+                        ),
+                        'url': st.column_config.LinkColumn(
+                            'Compass',
+                            width=100
+                        )
+                    }
+                    
+                    # For display only, drop 'id' column
+                    display_favorites_for_table = display_favorites[columns_to_display].copy()
+                    if 'id' in display_favorites_for_table.columns:
+                        display_favorites_for_table = display_favorites_for_table.drop(columns=['id'])
+                    st.dataframe(
+                        display_favorites_for_table,
+                        column_config=column_config,
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                    # Add a refresh button
+                    if st.button("Refresh Favorites", key="refresh_favorites"):
+                        st.session_state['needs_refresh'] = True
+                        st.rerun()
+
+            except Exception as e:
+                st.error(f"Error loading favorites: {e}")
+                st.info(f"Make sure the database exists at: {db_path} and the schema is as expected.")
 
 except Exception as e:
     st.error(f"Error: {e}")

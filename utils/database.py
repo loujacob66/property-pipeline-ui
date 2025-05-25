@@ -40,7 +40,8 @@ def get_all_listings(db_path, limit=None):
             'bike_score': 'float64',
             'latitude': 'float64',
             'longitude': 'float64',
-            'estimated_monthly_cashflow': 'float64'
+            'estimated_monthly_cashflow': 'float64',
+            'favorite': 'int64'
         }
         df = pd.read_sql_query(query, conn, dtype=dtype_dict)
         conn.close()
@@ -230,5 +231,59 @@ def remove_from_blacklist(db_path, address):
     except Exception as e:
         print(f"Error removing address from blacklist: {e}")
         return False
+    finally:
+        conn.close()
+
+def toggle_favorite(db_path, listing_id, is_favorite):
+    """Toggle the favorite status of a listing."""
+    # print(f"[DEBUG] toggle_favorite called with db_path={db_path}, id={listing_id}, is_favorite={is_favorite}")
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        # First check if the listing exists
+        cursor.execute("SELECT id FROM listings WHERE id = ?", (listing_id,))
+        if not cursor.fetchone():
+            # print(f"[DEBUG] Listing {listing_id} not found in database")
+            return False
+            
+        # Get current favorite status
+        cursor.execute("SELECT favorite FROM listings WHERE id = ?", (listing_id,))
+        # current_status = cursor.fetchone()
+        # print(f"[DEBUG] Current favorite status: {current_status[0] if current_status else 'None'}")
+        
+        # Update the favorite status
+        cursor.execute("""
+            UPDATE listings 
+            SET favorite = ? 
+            WHERE id = ?
+        """, (1 if is_favorite else 0, listing_id))
+        conn.commit()
+        # print(f"[DEBUG] Rows updated: {cursor.rowcount}")
+        
+        # Verify the update
+        cursor.execute("SELECT favorite FROM listings WHERE id = ?", (listing_id,))
+        # new_status = cursor.fetchone()
+        # print(f"[DEBUG] New favorite status: {new_status[0] if new_status else 'None'}")
+        
+        return cursor.rowcount > 0
+    except Exception as e:
+        print(f"Error toggling favorite status: {e}") # Keep this error print for actual errors
+        return False
+    finally:
+        conn.close()
+
+def get_favorites(db_path):
+    """Get all favorite listings from the database."""
+    conn = get_db_connection(db_path)
+    try:
+        df = pd.read_sql_query("""
+            SELECT * FROM listings 
+            WHERE favorite = 1
+            ORDER BY last_updated DESC
+        """, conn)
+        return df
+    except Exception as e:
+        print(f"Error fetching favorites: {e}")
+        return pd.DataFrame()
     finally:
         conn.close()
